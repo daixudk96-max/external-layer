@@ -7,6 +7,8 @@
  * all survive the round trip.
  */
 
+import { randomUUID } from "node:crypto";
+
 type JsonObject = Record<string, unknown>;
 
 function asObject(value: unknown): JsonObject | undefined {
@@ -339,3 +341,191 @@ export function chatCompletionsToResponses(body: unknown): Record<string, unknow
 
   return result;
 }
+
+/**
+ * Incrementally translate an upstream Responses SSE byte stream into
+ * an OpenAI chat.completion.chunk SSE byte stream.
+ */
+export function transformResponsesStreamToChatStream(
+  upstreamStream: ReadableStream<Uint8Array>,
+  model: string,
+): ReadableStream<Uint8Array> {
+  const reader = upstreamStream.getReader();
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let eventName = "";
+  let completionId = `chatcmpl-${randomUUID()}`;
+  const created = Math.floor(Date.now() / 1000);
+  let hasToolCalls = false;
+  let doneSent = false;
+
+  function emitChunk(
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    choices: unknown[],
+    usage?: unknown,
+  ) {
+    const chunk: Record<string, unknown> = {
+      id: completionId,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices,
+    };
+    if (usage) {
+      chunk.usage = mapUsage(usage) ?? usage;
+    }
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+  }
+
+  function handleData(controller: ReadableStreamDefaultController<Uint8Array>, dataStr: string) {
+    const currentEvent = eventName;
+    eventName = "";
+
+    if (dataStr.trim() === "[DONE]") {
+      if (!doneSent) {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        doneSent = true;
+      }
+      return;
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(dataStr);
+    } catch {
+      return;
+    }
+
+    const type = typeof parsed.type === "string" ? parsed.type : currentEvent;
+
+    if (type === "response.created") {
+      const resp = asObject(parsed.response);
+      if (resp && typeof resp.id === "string") {
+        completionId = `chatcmpl-${resp.id}`;
+      }
+      emitChunk(controller, [
+        {
+          index: 0,
+          delta: { role: "assistant" },
+          finish_reason: null,
+        },
+      ]);
+    } else if (type === "response.output_text.delta") {
+      const delta = typeof parsed.delta === "string" ? parsed.delta : "";
+      emitChunk(controller, [
+        {
+          index: 0,
+          delta: { content: delta },
+          finish_reason: null,
+        },
+      ]);
+    } else if (type === "response.output_item.added") {
+      const item = asObject(parsed.item);
+      if (item && item.type === "function_call") {
+        hasToolCalls = true;
+        const callId = String(item.call_id ?? item.id ?? "call_0");
+        const name = String(item.name ?? "");
+        const args = String(item.arguments ?? "");
+        emitChunk(controller, [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: callId,
+                  type: "function",
+                  function: { name, arguments: args },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ]);
+      }
+    } else if (type === "response.function_call_arguments.delta") {
+      hasToolCalls = true;
+      const delta = String(parsed.delta ?? "");
+      emitChunk(controller, [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: { arguments: delta },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ]);
+    } else if (type === "response.completed") {
+      const resp = asObject(parsed.response);
+      const usage = resp?.usage;
+      emitChunk(
+        controller,
+        [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: hasToolCalls ? "tool_calls" : "stop",
+          },
+        ],
+        usage,
+      );
+    }
+  }
+
+  function processLines(
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    text: string,
+  ) {
+    buffer += text;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (let line of lines) {
+      if (line.endsWith("\r")) {
+        line = line.slice(0, -1);
+      }
+      if (line.startsWith("event: ")) {
+        eventName = line.slice(7).trim();
+      } else if (line.startsWith("data: ")) {
+        handleData(controller, line.slice(6));
+      }
+    }
+  }
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            if (buffer.length > 0) {
+              processLines(controller, "\n");
+            }
+            if (!doneSent) {
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              doneSent = true;
+            }
+            controller.close();
+            break;
+          }
+          if (value) {
+            const chunkText = decoder.decode(value, { stream: true });
+            processLines(controller, chunkText);
+          }
+        }
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason);
+    },
+  });
+}
+

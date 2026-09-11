@@ -1,5 +1,10 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { deriveIdempotencyKey, IdempotencyStore } from "./idempotency";
+import {
+  chatCompletionsToResponses,
+  responsesToChatCompletions,
+  transformResponsesStreamToChatStream,
+} from "./chat-completions";
 import { tierSlugForEffort, unifiedCatalog } from "./models";
 import { classifyEmptyCompletion, isTransientError, withTransientRetry } from "./reliability";
 
@@ -170,7 +175,44 @@ function mapRequestModel(standard: Record<string, unknown>, capabilities: { solA
   return { ...standard, model: tierSlugForEffort(effort, capabilities) };
 }
 
+function tapStream(
+  source: ReadableStream<Uint8Array>,
+  onComplete: (fullText: string) => void,
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  const decoder = new TextDecoder();
+  let accumulated = "";
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            controller.close();
+            onComplete(accumulated);
+            break;
+          }
+          if (value) {
+            accumulated += decoder.decode(value, { stream: true });
+            controller.enqueue(value);
+          }
+        }
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason);
+    },
+  });
+}
+
 export async function startExternalLayer(config: ExternalLayerConfig): Promise<ExternalLayerHandle> {
+  if (!process.env.NO_PROXY && (process.env.HTTP_PROXY || process.env.HTTPS_PROXY)) {
+    process.env.NO_PROXY = "127.0.0.1,localhost";
+  }
+
   let requests = 0;
   let lastError: string | undefined;
   const upstreamBase = config.upstreamBaseUrl.replace(/\/+$/, "");
@@ -180,62 +222,243 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
     port: config.port ?? 0,
     async fetch(req) {
       const url = new URL(req.url);
-      if (req.method === "POST" && url.pathname === "/v1/responses") {
+      const isResponses = req.method === "POST" && url.pathname === "/v1/responses";
+      const isChatCompletions = req.method === "POST" && url.pathname === "/v1/chat/completions";
+
+      if (isResponses || isChatCompletions) {
         if (!bearerMatches(req.headers.get("authorization"), config.apiKey)) return unauthorized();
         requests += 1;
-        let standard: Record<string, unknown>;
+        let rawBody: Record<string, unknown>;
         try {
-          standard = await req.json() as Record<string, unknown>;
+          rawBody = (await req.json()) as Record<string, unknown>;
         } catch {
           return Response.json({ error: { message: "ChatGPT Web facade requires a JSON request body" } }, { status: 400 });
         }
 
-        const idempotencyKey = deriveIdempotencyKey(req.headers.get("idempotency-key"), standard);
-        const cached = idempotencyStore.get(idempotencyKey);
-        if (cached) {
-          return new Response(cached.body, {
-            status: cached.status,
-            headers: {
-              "content-type": cached.contentType,
-              "x-ext-layer-replay": "true",
-            },
-          });
+        let standard: Record<string, unknown>;
+        let requestedModel: string;
+        if (isChatCompletions) {
+          requestedModel = typeof rawBody.model === "string" ? rawBody.model : "chatgpt-web/latest";
+          standard = chatCompletionsToResponses(rawBody);
+        } else {
+          standard = rawBody;
+          requestedModel = typeof standard.model === "string" ? standard.model : "chatgpt-web/latest";
         }
 
-        const result = await idempotencyStore.runWithDeduplication(idempotencyKey, async () => {
-          let token: string;
-          try {
-            token = await config.tokenProvider();
-          } catch {
-            lastError = "credential unavailable";
-            return {
-              status: 401,
-              body: JSON.stringify({
-                error: { message: "ChatGPT credential unavailable", type: "authentication_error", code: "credential_unavailable" },
-              }),
-              contentType: "application/json",
-            };
-          }
-          const capabilities = { solAvailable: config.solAvailable ?? true, proAvailable: config.proAvailable ?? true };
+        const isStreaming = Boolean(standard.stream);
+        const idempotencyKey = deriveIdempotencyKey(req.headers.get("idempotency-key"), standard);
 
-          const retryLimit = config.transientRetryLimit === 0
-            ? 1
-            : (config.transientRetryLimit !== undefined && config.transientRetryLimit < 0)
-              ? 1
-              : (config.transientRetryLimit ?? 5);
-
-          const injectedSleepMs = config.retrySleepMs !== undefined
-            ? config.retrySleepMs
-            : (process.env.NODE_ENV === "test" ? 1 : undefined);
-
-          const retrySleep = injectedSleepMs !== undefined
-            ? async () => {
-                if (injectedSleepMs > 0) {
-                  await new Promise((resolve) => setTimeout(resolve, injectedSleepMs));
-                }
+        const cached = idempotencyStore.get(idempotencyKey);
+        if (cached) {
+          if (isResponses) {
+            return new Response(cached.body, {
+              status: cached.status,
+              headers: {
+                "content-type": cached.contentType,
+                "x-ext-layer-replay": "true",
+              },
+            });
+          } else {
+            // isChatCompletions
+            if (!isStreaming) {
+              let parsed: unknown;
+              try {
+                parsed = JSON.parse(cached.body);
+              } catch {
+                parsed = {};
               }
-            : undefined;
+              const chatJson = responsesToChatCompletions(parsed, requestedModel);
+              return Response.json(chatJson, {
+                status: cached.status,
+                headers: { "x-ext-layer-replay": "true" },
+              });
+            } else {
+              const replayStream = transformResponsesStreamToChatStream(
+                new ReadableStream({
+                  start(c) {
+                    c.enqueue(new TextEncoder().encode(cached.body));
+                    c.close();
+                  },
+                }),
+                requestedModel,
+              );
+              return new Response(replayStream, {
+                status: cached.status,
+                headers: {
+                  "content-type": "text/event-stream",
+                  "x-ext-layer-replay": "true",
+                },
+              });
+            }
+          }
+        }
 
+        let token: string;
+        try {
+          token = await config.tokenProvider();
+        } catch {
+          lastError = "credential unavailable";
+          return Response.json(
+            { error: { message: "ChatGPT credential unavailable", type: "authentication_error", code: "credential_unavailable" } },
+            { status: 401 },
+          );
+        }
+        const capabilities = { solAvailable: config.solAvailable ?? true, proAvailable: config.proAvailable ?? true };
+
+        const retryLimit = config.transientRetryLimit === 0
+          ? 1
+          : (config.transientRetryLimit !== undefined && config.transientRetryLimit < 0)
+            ? 1
+            : (config.transientRetryLimit ?? 5);
+
+        const injectedSleepMs = config.retrySleepMs !== undefined
+          ? config.retrySleepMs
+          : (process.env.NODE_ENV === "test" ? 1 : undefined);
+
+        const retrySleep = injectedSleepMs !== undefined
+          ? async () => {
+              if (injectedSleepMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, injectedSleepMs));
+              }
+            }
+          : undefined;
+
+        if (isStreaming) {
+          interface UpstreamStreamResult {
+            status: number;
+            bodyStream?: ReadableStream<Uint8Array>;
+            bodyText?: string;
+            contentType: string;
+          }
+
+          let turnResult: UpstreamStreamResult;
+          try {
+            turnResult = await withTransientRetry<UpstreamStreamResult>(
+              async (_attempt) => {
+                const clonedStandard = JSON.parse(JSON.stringify(standard)) as Record<string, unknown>;
+                const native = toNativeRequest(
+                  mapRequestModel(clonedStandard, capabilities),
+                  { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
+                );
+
+                let upstream: Response;
+                try {
+                  upstream = await fetch(`${upstreamBase}/v1/responses`, {
+                    method: "POST",
+                    headers: {
+                      authorization: `Bearer ${token}`,
+                      "content-type": req.headers.get("content-type") ?? "application/json",
+                    },
+                    body: JSON.stringify(native),
+                  });
+                } catch (error) {
+                  const detail = error instanceof Error ? error.message : "upstream unreachable";
+                  throw new UpstreamNetworkError(detail);
+                }
+
+                const contentType = upstream.headers.get("content-type") ?? "application/json";
+
+                if (upstream.status >= 400 && upstream.status < 500) {
+                  lastError = `upstream ${upstream.status}`;
+                  const bodyText = await upstream.text();
+                  return { status: upstream.status, bodyText, contentType };
+                }
+
+                if (upstream.status >= 500) {
+                  const bodyText = await upstream.text();
+                  throw new UpstreamHttpFailure(upstream.status, bodyText, contentType);
+                }
+
+                // 2xx 成功：流式边到边转发，不读 bodyText
+                return { status: upstream.status, bodyStream: upstream.body!, contentType };
+              },
+              {
+                limit: retryLimit,
+                sleep: retrySleep,
+                isRetryable: (error: unknown) => {
+                  if (error instanceof UpstreamHttpFailure) {
+                    return error.status >= 500 || isTransientError(error.body);
+                  }
+                  if (error instanceof EmptyTurnError) {
+                    return true;
+                  }
+                  if (error instanceof UpstreamNetworkError) {
+                    return isTransientError(error.detail);
+                  }
+                  return false;
+                },
+                onRetry: (attempt: number, message: string) => {
+                  const family = isTransientError(message)
+                    ? "transient_error"
+                    : message.includes("empty turn content")
+                      ? "empty_turn_content"
+                      : "upstream_http_5xx";
+                  console.warn(`[external-layer] transient retry attempt ${attempt}/${retryLimit} family=${family}`);
+                },
+              },
+            );
+          } catch (error) {
+            if (error instanceof UpstreamHttpFailure) {
+              lastError = `upstream ${error.status}`;
+              turnResult = { status: error.status, bodyText: error.body, contentType: error.contentType };
+            } else if (error instanceof UpstreamNetworkError) {
+              lastError = error.detail;
+              turnResult = {
+                status: 502,
+                bodyText: JSON.stringify({
+                  error: {
+                    message: `ChatGPT Web upstream is unreachable: ${lastError}`,
+                    type: "server_error",
+                    code: "upstream_unreachable",
+                  },
+                }),
+                contentType: "application/json",
+              };
+            } else {
+              lastError = error instanceof Error ? error.message : String(error);
+              turnResult = {
+                status: 500,
+                bodyText: JSON.stringify({ error: { message: `Internal server error: ${lastError}` } }),
+                contentType: "application/json",
+              };
+            }
+          }
+
+          if (turnResult.status >= 400 || !turnResult.bodyStream) {
+            return new Response(turnResult.bodyText, {
+              status: turnResult.status,
+              headers: { "content-type": turnResult.contentType },
+            });
+          }
+
+          // Record the upstream SSE text for BOTH routes: a chat client may replay the
+          // same key later (and a Responses replay of a chat-opened turn must be
+          // byte-identical), so the idempotency record is written from one tap that
+          // sits upstream of the client-specific transform.
+          const recordedStream = tapStream(turnResult.bodyStream, (fullText) => {
+            idempotencyStore.save(idempotencyKey, {
+              status: 200,
+              body: fullText,
+              contentType: turnResult.contentType,
+            });
+          });
+
+          if (isResponses) {
+            return new Response(recordedStream, {
+              status: 200,
+              headers: { "content-type": turnResult.contentType },
+            });
+          } else {
+            const chatStream = transformResponsesStreamToChatStream(recordedStream, requestedModel);
+            return new Response(chatStream, {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            });
+          }
+        }
+
+        // 非流式请求
+        const result = await idempotencyStore.runWithDeduplication(idempotencyKey, async () => {
           try {
             const response = await withTransientRetry(
               async (_attempt) => {
@@ -359,6 +582,17 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             };
           }
         });
+
+        if (isChatCompletions && result.status === 200) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(result.body);
+          } catch {
+            parsed = {};
+          }
+          const chatJson = responsesToChatCompletions(parsed, requestedModel);
+          return Response.json(chatJson);
+        }
 
         return new Response(result.body, {
           status: result.status,
