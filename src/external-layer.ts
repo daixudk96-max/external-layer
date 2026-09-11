@@ -5,7 +5,7 @@ import {
   responsesToChatCompletions,
   transformResponsesStreamToChatStream,
 } from "./chat-completions";
-import { tierSlugForEffort, unifiedCatalog } from "./models";
+import { CHATGPT_WEB_LATEST_MODEL_ID, tierSlugForEffort, unifiedCatalog, UnknownEffortError } from "./models";
 import { classifyEmptyCompletion, isTransientError, withTransientRetry } from "./reliability";
 
 /** External layer: a standard Responses API facade in front of the original codex-chatgpt-web upstream.
@@ -179,14 +179,18 @@ export function toNativeRequest(
   };
 }
 
-/** Client-visible unified model ids do not exist upstream; the advertised `reasoning.effort` picks
- * the concrete upstream tier slug instead. Non-unified ids (already a tier slug) pass through. */
+/** Client-visible unified model ids do not exist upstream; the advertised effort picks the concrete
+ * upstream tier slug instead. Non-unified ids (already a tier slug) pass through.
+ * Standard Responses spells the knob `reasoning.effort`, but plenty of callers (and our own
+ * chat-completions bridge) send the flat `reasoning_effort`: honour both, nested first, so a
+ * tier request is never silently dropped. */
 function mapRequestModel(standard: Record<string, unknown>, capabilities: { solAvailable: boolean; proAvailable: boolean }): Record<string, unknown> {
   const model = typeof standard.model === "string" ? standard.model : "";
-  if (model !== "chatgpt-web/latest") return standard;
+  if (model !== CHATGPT_WEB_LATEST_MODEL_ID) return standard;
   const reasoning = isRecord(standard.reasoning) ? standard.reasoning : undefined;
-  const effort = reasoning && typeof reasoning.effort === "string" ? reasoning.effort : undefined;
-  return { ...standard, model: tierSlugForEffort(effort, capabilities) };
+  const nested = reasoning && typeof reasoning.effort === "string" ? reasoning.effort : undefined;
+  const flat = typeof standard.reasoning_effort === "string" ? standard.reasoning_effort : undefined;
+  return { ...standard, model: tierSlugForEffort(nested ?? flat, capabilities) };
 }
 
 function tapStream(
@@ -356,6 +360,28 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           );
         }
         const capabilities = { solAvailable: config.solAvailable ?? true, proAvailable: config.proAvailable ?? true };
+
+        // Resolve the tier before any upstream turn is opened: a request naming an unsupported
+        // effort must fail loud, never be answered by a different tier than the client picked.
+        if (typeof standard.model === "string" && standard.model === CHATGPT_WEB_LATEST_MODEL_ID) {
+          try {
+            mapRequestModel(standard, capabilities);
+          } catch (error) {
+            if (error instanceof UnknownEffortError) {
+              return Response.json(
+                {
+                  error: {
+                    message: error.message,
+                    type: "invalid_request_error",
+                    code: "invalid_reasoning_effort",
+                  },
+                },
+                { status: 400 },
+              );
+            }
+            throw error;
+          }
+        }
 
         const retryLimit = config.transientRetryLimit === 0
           ? 1

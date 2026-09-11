@@ -73,6 +73,23 @@ const EFFORT_ALIASES: Record<string, string> = {
   minimal: "low",
 };
 
+/** Supported `reasoning_effort` values in ladder order — shared by the catalog and error messages. */
+export const CHATGPT_WEB_EFFORT_LADDER: readonly string[] = CHATGPT_WEB_UNIFIED_TIERS.map(tier => tier.effort);
+
+/**
+ * Raised for an effort outside the ladder. Serving the default tier instead would answer with a
+ * different model than the caller asked for, so the facade turns this into HTTP 400.
+ */
+export class UnknownEffortError extends Error {
+  constructor(effort: string) {
+    super(
+      `unknown reasoning effort "${effort}" for ${CHATGPT_WEB_LATEST_MODEL_ID}; supported values: `
+      + `${CHATGPT_WEB_EFFORT_LADDER.join(", ")}`,
+    );
+    this.name = "UnknownEffortError";
+  }
+}
+
 function isObject(value: unknown): value is JsonObject {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -232,7 +249,12 @@ function normalizeEffort(effort: string | undefined): string | undefined {
  */
 export function tierSlugForEffort(effort: string | undefined, capabilities: ModelCapabilities): string {
   const normalized = normalizeEffort(effort);
-  const tier = CHATGPT_WEB_UNIFIED_TIERS.find(candidate => candidate.effort === normalized) ?? defaultTier();
+  const tier = normalized === undefined
+    ? defaultTier()
+    : CHATGPT_WEB_UNIFIED_TIERS.find(candidate => candidate.effort === normalized);
+  // Silently downgrading an unrecognised effort would serve a different tier than the client
+  // asked for (e.g. a typo'd "max" answering with Extra High) - fail loud instead.
+  if (!tier) throw new UnknownEffortError(normalized as string);
   if (tier.requiresPro && !capabilities.proAvailable) return defaultTier().slug;
   return tier.slug;
 }
