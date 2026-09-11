@@ -136,13 +136,27 @@ export function toNativeRequest(
   const items = normalizeInput(standard.input);
   const carriesEnvelope = items.some(item => /<\/?environment_context\b/i.test(itemPlainText(item)));
   if (!carriesEnvelope && options.defaultEnvironment) {
-    // The envelope must precede the activity message and share its turn identity.
-    items.unshift({
+    const envelope = {
       type: "message",
       role: "user",
       content: [{ type: "input_text", text: environmentEnvelope(options.defaultEnvironment) }],
       internal_chat_message_metadata_passthrough: { thread_id: threadId, turn_id: turnId },
-    });
+    };
+    // The upstream resolves turn trust from the environment text found BEFORE the ACTIVE user
+    // instruction (the last user item, `rawEnvironmentText` in adapters/chatgpt-web/environment.ts).
+    // Unshifting only works while the input holds a single user message; with tool results and a
+    // trailing instruction in the same array the parse finds nothing and the turn is rejected at
+    // 0ms with "missing cwd in trusted Codex environment context". Insert directly before the
+    // active user item instead.
+    let activeUserIndex = -1;
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      if (items[index]?.role === "user") {
+        activeUserIndex = index;
+        break;
+      }
+    }
+    if (activeUserIndex <= 0) items.unshift(envelope);
+    else items.splice(activeUserIndex, 0, envelope);
   }
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
