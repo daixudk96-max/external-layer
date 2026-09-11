@@ -1,9 +1,15 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import { unifiedCatalog } from "./models";
+import { tierSlugForEffort, unifiedCatalog } from "./models";
 
 /** External layer: a standard Responses API facade in front of the original codex-chatgpt-web upstream.
  * The upstream expects Codex-native requests authenticated with a ChatGPT OAuth bearer; this layer
  * owns the client-facing apiKey contract, the synthetic turn identity, and the response relay. */
+export interface DefaultEnvironmentConfig {
+  cwd: string;
+  workspaceRoots: string[];
+  sandboxMode?: string;
+}
+
 export interface ExternalLayerConfig {
   apiKey: string;
   upstreamBaseUrl: string;
@@ -12,6 +18,9 @@ export interface ExternalLayerConfig {
   /** Account capability flags used to fold the upstream catalog into the unified model. */
   solAvailable?: boolean;
   proAvailable?: boolean;
+  /** Trusted Codex environment synthesized for envelope-less standard clients (the upstream
+   * requires a cwd-bearing `<environment_context>` user message bound to the turn identity). */
+  defaultEnvironment?: DefaultEnvironmentConfig;
 }
 
 export interface ExternalLayerHandle {
@@ -61,11 +70,40 @@ function normalizeInput(input: unknown): Record<string, unknown>[] {
   }];
 }
 
+function itemPlainText(item: Record<string, unknown>): string {
+  if (typeof item.content === "string") return item.content;
+  if (!Array.isArray(item.content)) return "";
+  return item.content
+    .map(part => (isRecord(part) && typeof part.text === "string" ? part.text : ""))
+    .join("\n");
+}
+
+/** The upstream refuses a turn whose trusted Codex environment has no cwd. Standard clients never
+ * send that envelope, so the facade synthesizes one bound to the same turn identity. */
+function environmentEnvelope(environment: DefaultEnvironmentConfig): string {
+  const roots = environment.workspaceRoots.map(root => `<root>${root}</root>`).join("");
+  const sandbox = environment.sandboxMode ?? "danger-full-access";
+  return `<environment_context><cwd>${environment.cwd}</cwd><filesystem><workspace_roots>${roots}</workspace_roots><sandbox_mode>${sandbox}</sandbox_mode></filesystem></environment_context>`;
+}
+
 /** Translate a standard request into the upstream's Codex-native shape, minting a synthetic identity. */
-export function toNativeRequest(standard: Record<string, unknown>): Record<string, unknown> {
+export function toNativeRequest(
+  standard: Record<string, unknown>,
+  options: { defaultEnvironment?: DefaultEnvironmentConfig } = {},
+): Record<string, unknown> {
   const turnId = `prov-${randomUUID()}`;
   const threadId = `prov-${randomUUID()}`;
   const items = normalizeInput(standard.input);
+  const carriesEnvelope = items.some(item => /<\/?environment_context\b/i.test(itemPlainText(item)));
+  if (!carriesEnvelope && options.defaultEnvironment) {
+    // The envelope must precede the activity message and share its turn identity.
+    items.unshift({
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: environmentEnvelope(options.defaultEnvironment) }],
+      internal_chat_message_metadata_passthrough: { thread_id: threadId, turn_id: turnId },
+    });
+  }
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
     if (!item || item.role !== "user") continue;
@@ -85,6 +123,16 @@ export function toNativeRequest(standard: Record<string, unknown>): Record<strin
       "x-codex-turn-metadata": { ...turnMetadata, thread_id: threadId, turn_id: turnId },
     },
   };
+}
+
+/** Client-visible unified model ids do not exist upstream; the advertised `reasoning.effort` picks
+ * the concrete upstream tier slug instead. Non-unified ids (already a tier slug) pass through. */
+function mapRequestModel(standard: Record<string, unknown>, capabilities: { solAvailable: boolean; proAvailable: boolean }): Record<string, unknown> {
+  const model = typeof standard.model === "string" ? standard.model : "";
+  if (model !== "chatgpt-web/latest") return standard;
+  const reasoning = isRecord(standard.reasoning) ? standard.reasoning : undefined;
+  const effort = reasoning && typeof reasoning.effort === "string" ? reasoning.effort : undefined;
+  return { ...standard, model: tierSlugForEffort(effort, capabilities) };
 }
 
 export async function startExternalLayer(config: ExternalLayerConfig): Promise<ExternalLayerHandle> {
@@ -114,7 +162,8 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             { status: 401 },
           );
         }
-        const native = toNativeRequest(standard);
+        const capabilities = { solAvailable: config.solAvailable ?? true, proAvailable: config.proAvailable ?? true };
+        const native = toNativeRequest(mapRequestModel(standard, capabilities), { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) });
         let upstream: Response;
         try {
           upstream = await fetch(`${upstreamBase}/v1/responses`, {
