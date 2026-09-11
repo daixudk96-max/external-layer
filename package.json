@@ -1,0 +1,14 @@
+{
+  "name": "external-layer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH external layer: standard Responses API facade in front of the original codex-chatgpt-web upstream",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.0"
+  }
+}
