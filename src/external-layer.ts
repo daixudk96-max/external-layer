@@ -5,10 +5,11 @@ import {
   responsesToChatCompletions,
   transformResponsesStreamToChatStream,
 } from "./chat-completions";
-import { CHATGPT_WEB_LATEST_MODEL_ID, tierSlugForEffort, unifiedCatalog, UnknownEffortError } from "./models";
+import { CHATGPT_WEB_DEFAULT_TIER_EFFORT, CHATGPT_WEB_LATEST_MODEL_ID, deriveTierWindows, tierSlugForEffort, unifiedCatalog, UnknownEffortError } from "./models";
 import { classifyEmptyCompletion, isTransientError, withTransientRetry } from "./reliability";
 import { resolveStallTimeoutSec, UpstreamStallError } from "./stall-timeout";
 import { resolveToolTimeouts, type ToolTimeoutsConfig } from "./tool-timeouts";
+import { readUpstreamBiggerContext, resolveUpstreamHome } from "./upstream-home";
 
 export { UpstreamStallError } from "./stall-timeout";
 
@@ -29,6 +30,8 @@ export interface ExternalLayerConfig {
   /** Account capability flags used to fold the upstream catalog into the unified model. */
   solAvailable?: boolean;
   proAvailable?: boolean;
+  /** Upstream directory containing config.json for experimentalBiggerContext */
+  upstreamHome?: string;
   /** Trusted Codex environment synthesized for envelope-less standard clients (the upstream
    * requires a cwd-bearing `<environment_context>` user message bound to the turn identity). */
   defaultEnvironment?: DefaultEnvironmentConfig;
@@ -191,18 +194,39 @@ export function toNativeRequest(
   };
 }
 
+interface MappedModelResult {
+  mapped: Record<string, unknown>;
+  resolvedSlug: string;
+  resolvedEffort: string;
+}
+
+function resolveRequestModel(
+  standard: Record<string, unknown>,
+  capabilities: { solAvailable: boolean; proAvailable: boolean },
+): MappedModelResult {
+  const model = typeof standard.model === "string" ? standard.model : "";
+  if (model !== CHATGPT_WEB_LATEST_MODEL_ID) {
+    return { mapped: standard, resolvedSlug: model, resolvedEffort: CHATGPT_WEB_DEFAULT_TIER_EFFORT };
+  }
+  const reasoning = isRecord(standard.reasoning) ? standard.reasoning : undefined;
+  const nested = reasoning && typeof reasoning.effort === "string" ? reasoning.effort : undefined;
+  const flat = typeof standard.reasoning_effort === "string" ? standard.reasoning_effort : undefined;
+  const effort = nested ?? flat;
+  const slug = tierSlugForEffort(effort, capabilities);
+  return {
+    mapped: { ...standard, model: slug },
+    resolvedSlug: slug,
+    resolvedEffort: effort ?? CHATGPT_WEB_DEFAULT_TIER_EFFORT,
+  };
+}
+
 /** Client-visible unified model ids do not exist upstream; the advertised effort picks the concrete
  * upstream tier slug instead. Non-unified ids (already a tier slug) pass through.
  * Standard Responses spells the knob `reasoning.effort`, but plenty of callers (and our own
  * chat-completions bridge) send the flat `reasoning_effort`: honour both, nested first, so a
  * tier request is never silently dropped. */
 function mapRequestModel(standard: Record<string, unknown>, capabilities: { solAvailable: boolean; proAvailable: boolean }): Record<string, unknown> {
-  const model = typeof standard.model === "string" ? standard.model : "";
-  if (model !== CHATGPT_WEB_LATEST_MODEL_ID) return standard;
-  const reasoning = isRecord(standard.reasoning) ? standard.reasoning : undefined;
-  const nested = reasoning && typeof reasoning.effort === "string" ? reasoning.effort : undefined;
-  const flat = typeof standard.reasoning_effort === "string" ? standard.reasoning_effort : undefined;
-  return { ...standard, model: tierSlugForEffort(nested ?? flat, capabilities) };
+  return resolveRequestModel(standard, capabilities).mapped;
 }
 
 function tapStream(
@@ -457,23 +481,39 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
 
         // Resolve the tier before any upstream turn is opened: a request naming an unsupported
         // effort must fail loud, never be answered by a different tier than the client picked.
-        if (typeof standard.model === "string" && standard.model === CHATGPT_WEB_LATEST_MODEL_ID) {
-          try {
-            mapRequestModel(standard, capabilities);
-          } catch (error) {
-            if (error instanceof UnknownEffortError) {
-              return Response.json(
-                {
-                  error: {
-                    message: error.message,
-                    type: "invalid_request_error",
-                    code: "invalid_reasoning_effort",
-                  },
+        let mappedResolution: MappedModelResult;
+        try {
+          mappedResolution = resolveRequestModel(standard, capabilities);
+        } catch (error) {
+          if (error instanceof UnknownEffortError) {
+            return Response.json(
+              {
+                error: {
+                  message: error.message,
+                  type: "invalid_request_error",
+                  code: "invalid_reasoning_effort",
                 },
-                { status: 400 },
-              );
+              },
+              { status: 400 },
+            );
+          }
+          throw error;
+        }
+
+        let contextWindowHeaderValue: string | undefined;
+        if (config.upstreamHome !== undefined) {
+          const upstreamModelsRes = await fetch(`${upstreamBase}/v1/models?client_version=0.0.0`, {
+            headers: { authorization: `Bearer ${token}` },
+          }).catch(() => undefined);
+          if (upstreamModelsRes && upstreamModelsRes.ok) {
+            const upstreamCatalog = await upstreamModelsRes.json().catch(() => undefined);
+            const derived = deriveTierWindows(upstreamCatalog, capabilities);
+            const matchedTier = (mappedResolution.resolvedEffort && derived.tiers[mappedResolution.resolvedEffort])
+              ? derived.tiers[mappedResolution.resolvedEffort]
+              : Object.values(derived.tiers).find(t => t.slug === mappedResolution.resolvedSlug);
+            if (matchedTier?.context_window !== undefined && matchedTier?.context_window !== null) {
+              contextWindowHeaderValue = String(matchedTier.context_window);
             }
-            throw error;
           }
         }
 
@@ -507,9 +547,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           try {
             turnResult = await withTransientRetry<UpstreamStreamResult>(
               async (_attempt) => {
-                const clonedStandard = JSON.parse(JSON.stringify(standard)) as Record<string, unknown>;
+                const clonedStandard = JSON.parse(JSON.stringify(mappedResolution.mapped)) as Record<string, unknown>;
                 const native = toNativeRequest(
-                  mapRequestModel(clonedStandard, capabilities),
+                  clonedStandard,
                   { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
                 );
 
@@ -664,13 +704,19 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             );
             return new Response(clientStream, {
               status: 200,
-              headers: { "content-type": turnResult.contentType },
+              headers: {
+                "content-type": turnResult.contentType,
+                ...(contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
+              },
             });
           } else {
             const chatStream = transformResponsesStreamToChatStream(recordedStream, requestedModel);
             return new Response(chatStream, {
               status: 200,
-              headers: { "content-type": "text/event-stream" },
+              headers: {
+                "content-type": "text/event-stream",
+                ...(contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
+              },
             });
           }
         }
@@ -680,9 +726,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           try {
             const response = await withTransientRetry(
               async (_attempt) => {
-                const clonedStandard = JSON.parse(JSON.stringify(standard)) as Record<string, unknown>;
+                const clonedStandard = JSON.parse(JSON.stringify(mappedResolution.mapped)) as Record<string, unknown>;
                 const native = toNativeRequest(
-                  mapRequestModel(clonedStandard, capabilities),
+                  clonedStandard,
                   { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
                 );
 
@@ -850,12 +896,63 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             parsed = {};
           }
           const chatJson = responsesToChatCompletions(parsed, requestedModel);
-          return Response.json(chatJson);
+          return Response.json(chatJson, {
+            headers: {
+              ...(contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
+            },
+          });
         }
 
         return new Response(result.body, {
           status: result.status,
-          headers: { "content-type": result.contentType },
+          headers: {
+            "content-type": result.contentType,
+            ...(result.status === 200 && contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
+          },
+        });
+      }
+      if (req.method === "GET" && url.pathname === "/v1/context") {
+        if (!bearerMatches(req.headers.get("authorization"), config.apiKey)) return unauthorized();
+        let token: string;
+        try {
+          token = await config.tokenProvider();
+        } catch {
+          lastError = "credential unavailable";
+          return Response.json(
+            { error: { message: "ChatGPT credential unavailable", type: "authentication_error", code: "credential_unavailable" } },
+            { status: 401 },
+          );
+        }
+        const upstream = await fetch(`${upstreamBase}/v1/models?client_version=0.0.0`, {
+          headers: { authorization: `Bearer ${token}` },
+        }).catch(() => undefined);
+        if (!upstream || !upstream.ok) {
+          lastError = `upstream models ${upstream?.status ?? "unreachable"}`;
+          return Response.json(
+            { error: { message: `ChatGPT Web model catalog is unavailable (${lastError})`, type: "server_error", code: "upstream_unreachable" } },
+            { status: 502 },
+          );
+        }
+        const upstreamCatalog = await upstream.json().catch(() => undefined);
+        const capabilities = {
+          solAvailable: config.solAvailable ?? true,
+          proAvailable: config.proAvailable ?? true,
+        };
+        const derived = deriveTierWindows(upstreamCatalog, capabilities);
+        const effectiveHome = resolveUpstreamHome(config.upstreamHome);
+        const biggerContext = readUpstreamBiggerContext(effectiveHome);
+        const defaultTierWindow = derived.tiers[derived.latestEffort];
+        const latestContextWindow = typeof defaultTierWindow?.context_window === "number"
+          ? defaultTierWindow.context_window
+          : null;
+        return Response.json({
+          object: "context",
+          model: CHATGPT_WEB_LATEST_MODEL_ID,
+          latest_effort: derived.latestEffort,
+          bigger_context: biggerContext,
+          latest_context_window: latestContextWindow,
+          source: derived.source,
+          tiers: derived.tiers,
         });
       }
       if (req.method === "GET" && url.pathname === "/v1/models") {

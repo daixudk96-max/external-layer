@@ -19,6 +19,8 @@ const defaultEnvironment = {
   sandboxMode: process.env.EXT_LAYER_SANDBOX ?? "danger-full-access",
 };
 
+const upstreamHome = process.env.EXT_LAYER_UPSTREAM_HOME;
+
 const layer = await startExternalLayer({
   apiKey,
   upstreamBaseUrl,
@@ -28,6 +30,7 @@ const layer = await startExternalLayer({
   statePath,
   stallTimeoutSec,
   firstByteTimeoutMs,
+  upstreamHome,
 });
 console.log(
   `[external-layer] listening on ${layer.baseUrl}/v1 (upstream ${upstreamBaseUrl}) [stall=${layer.stallTimeoutSec}s firstByte=${layer.firstByteTimeoutMs}ms]`,

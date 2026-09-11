@@ -137,8 +137,85 @@ function modelTemplate(catalog: unknown): JsonObject {
   const source = native ?? rows[0];
   if (!source) return {};
   const template = copyJson(source) as JsonObject;
-  for (const alias of ["id", "object", "created", "owned_by"]) delete template[alias];
+  for (const alias of [
+    "id",
+    "object",
+    "created",
+    "owned_by",
+    "context_window",
+    "max_context_window",
+    "effective_context_window_percent",
+    "auto_compact_token_limit",
+    "comp_hash",
+  ]) {
+    delete template[alias];
+  }
   return template;
+}
+
+export function deriveTierWindows(upstreamCatalog: unknown, capabilities: ModelCapabilities): {
+  source: "upstream" | "unavailable";
+  latestEffort: string;
+  tiers: Record<
+    string,
+    {
+      slug: string;
+      context_window: unknown;
+      max_context_window: unknown;
+      effective_context_window_percent: unknown;
+      auto_compact_token_limit: unknown;
+    }
+  >;
+} {
+  const rows = upstreamRows(upstreamCatalog);
+  const hasWebRow = rows.some(row => {
+    const slug = rowSlug(row);
+    return slug !== undefined && slug.startsWith(CHATGPT_WEB_MODEL_PREFIX);
+  });
+  if (!hasWebRow) {
+    return {
+      source: "unavailable",
+      latestEffort: CHATGPT_WEB_DEFAULT_TIER_EFFORT,
+      tiers: {},
+    };
+  }
+  const tiers: Record<
+    string,
+    {
+      slug: string;
+      context_window: unknown;
+      max_context_window: unknown;
+      effective_context_window_percent: unknown;
+      auto_compact_token_limit: unknown;
+    }
+  > = {};
+  for (const tier of CHATGPT_WEB_UNIFIED_TIERS) {
+    let resolvedSlug: string;
+    try {
+      resolvedSlug = tierSlugForEffort(tier.effort, capabilities);
+    } catch {
+      continue;
+    }
+    if (resolvedSlug !== tier.slug) {
+      continue;
+    }
+    const row = rows.find(candidate => rowSlug(candidate) === tier.slug);
+    if (!row) {
+      continue;
+    }
+    tiers[tier.effort] = {
+      slug: tier.slug,
+      context_window: row.context_window,
+      max_context_window: row.max_context_window,
+      effective_context_window_percent: row.effective_context_window_percent,
+      auto_compact_token_limit: row.auto_compact_token_limit,
+    };
+  }
+  return {
+    source: Object.keys(tiers).length > 0 ? "upstream" : "unavailable",
+    latestEffort: CHATGPT_WEB_DEFAULT_TIER_EFFORT,
+    tiers,
+  };
 }
 
 /** Reuse the upstream reasoning-level metadata for a tier when the template carries it. */
@@ -165,9 +242,14 @@ function webRow(template: JsonObject): JsonObject {
 }
 
 /** The single unified row: tiers ride on reasoning_effort, Extra High is the default. */
-function latestRow(template: JsonObject, capabilities: ModelCapabilities): JsonObject {
+function latestRow(
+  template: JsonObject,
+  capabilities: ModelCapabilities,
+  derived: ReturnType<typeof deriveTierWindows>,
+): JsonObject {
   const tiers = CHATGPT_WEB_UNIFIED_TIERS.filter(tier => !tier.requiresPro || capabilities.proAvailable);
-  return {
+  const defaultTierWindow = derived.tiers[CHATGPT_WEB_DEFAULT_TIER_EFFORT];
+  const row: JsonObject = {
     ...webRow(template),
     slug: CHATGPT_WEB_LATEST_MODEL_ID,
     display_name: "ChatGPT Web — Latest",
@@ -175,7 +257,21 @@ function latestRow(template: JsonObject, capabilities: ModelCapabilities): JsonO
     multi_agent_version: "v1",
     default_reasoning_level: CHATGPT_WEB_DEFAULT_TIER_EFFORT,
     supported_reasoning_levels: tiers.map(tier => reasoningLevel(template, tier.effort, tier.displayName)),
+    x_ext_layer_latest_effort: derived.latestEffort,
+    x_ext_layer_tier_windows: derived.tiers,
+    x_ext_layer_context_source: derived.source,
   };
+  if (defaultTierWindow) {
+    if (defaultTierWindow.context_window !== undefined) row.context_window = defaultTierWindow.context_window;
+    if (defaultTierWindow.max_context_window !== undefined) row.max_context_window = defaultTierWindow.max_context_window;
+    if (defaultTierWindow.effective_context_window_percent !== undefined) {
+      row.effective_context_window_percent = defaultTierWindow.effective_context_window_percent;
+    }
+    if (defaultTierWindow.auto_compact_token_limit !== undefined) {
+      row.auto_compact_token_limit = defaultTierWindow.auto_compact_token_limit;
+    }
+  }
+  return row;
 }
 
 /**
@@ -203,8 +299,9 @@ function lunaRow(template: JsonObject, slug: string, displayName: string, descri
  */
 export function unifiedCatalog(upstreamCatalog: unknown, capabilities: ModelCapabilities): UnifiedCatalog {
   const template = modelTemplate(upstreamCatalog);
+  const derived = deriveTierWindows(upstreamCatalog, capabilities);
   const models = capabilities.solAvailable
-    ? [latestRow(template, capabilities)]
+    ? [latestRow(template, capabilities, derived)]
     : [
       lunaRow(
         template,
