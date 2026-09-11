@@ -423,3 +423,91 @@ test("/v1/chat/completions streaming records its upstream turn, so a repeated ke
     up.stop();
   }
 });
+
+test("a chat stream that breaks upstream before its terminal marker ends with an error frame and [DONE]", async () => {
+  // Frames without the upstream's own [DONE]: the turn dies mid-flight.
+  const up = upstream({ mode: "truncate", chunkDelayMs: 0, frames: defaultFrames(1).slice(0, 2) });
+  const layer = await startExternalLayer({ apiKey: KEY, upstreamBaseUrl: up.url, tokenProvider: async () => "tok", port: 0 });
+  try {
+    const res = await fetch(`${layer.baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "chatgpt-web/latest", messages: [{ role: "user", content: "say PONG" }], stream: true }),
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("upstream_error");
+    expect(text.trimEnd().endsWith("data: [DONE]")).toBe(true);
+  } finally {
+    await layer.stop();
+    up.stop();
+  }
+});
+
+test("a chat stream that breaks after [DONE] keeps the terminated turn intact", async () => {
+  const up = upstream({ mode: "truncate", chunkDelayMs: 0 });
+  const layer = await startExternalLayer({ apiKey: KEY, upstreamBaseUrl: up.url, tokenProvider: async () => "tok", port: 0 });
+  try {
+    const res = await fetch(`${layer.baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "chatgpt-web/latest", messages: [{ role: "user", content: "say PONG" }], stream: true }),
+    });
+    const text = await res.text();
+    expect(text).not.toContain("upstream_error");
+    expect(text.trimEnd().endsWith("data: [DONE]")).toBe(true);
+  } finally {
+    await layer.stop();
+    up.stop();
+  }
+});
+
+test("a responses stream that breaks upstream before [DONE] terminates with an error event and [DONE]", async () => {
+  const up = upstream({ mode: "truncate", chunkDelayMs: 0, frames: defaultFrames(1).slice(0, 2) });
+  const layer = await startExternalLayer({ apiKey: KEY, upstreamBaseUrl: up.url, tokenProvider: async () => "tok", port: 0 });
+  try {
+    const res = await fetch(`${layer.baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "chatgpt-web/latest", stream: true, input: "say PONG" }),
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain('"type":"error"');
+    expect(text.trimEnd().endsWith("data: [DONE]")).toBe(true);
+  } finally {
+    await layer.stop();
+    up.stop();
+  }
+});
+
+test("upstream heartbeats become keep-alive comments on the chat stream", async () => {
+  // The upstream sends `response.heartbeat` every ~1s while it thinks. A chat stream that drops
+  // them writes nothing for the whole thinking window and the server closes the socket mid-turn.
+  const up = upstream({
+    mode: "sse",
+    frames: [
+      ["event: response.created", `data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}`],
+      ["event: response.heartbeat", `data: {"type":"response.heartbeat"}`],
+      ["event: response.heartbeat", `data: {"type":"response.heartbeat"}`],
+      ["event: response.output_text.delta", `data: {"type":"response.output_text.delta","delta":"PONG-1"}`],
+      ["event: response.completed", `data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[],"usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}`],
+      ["data: [DONE]"],
+    ],
+  });
+  const layer = await startExternalLayer({ apiKey: KEY, upstreamBaseUrl: up.url, tokenProvider: async () => "tok", port: 0 });
+  try {
+    const res = await fetch(`${layer.baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: "chatgpt-web/latest", messages: [{ role: "user", content: "say PONG" }], stream: true }),
+    });
+    const text = await res.text();
+    expect(text.match(/: keep-alive/g)?.length).toBe(2);
+    expect(text).toContain('"content":"PONG-1"');
+    expect(text.trimEnd().endsWith("data: [DONE]")).toBe(true);
+  } finally {
+    await layer.stop();
+    up.stop();
+  }
+});

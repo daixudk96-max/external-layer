@@ -359,6 +359,16 @@ export function transformResponsesStreamToChatStream(
   const created = Math.floor(Date.now() / 1000);
   let hasToolCalls = false;
   let doneSent = false;
+  let errorSent = false;
+
+  function emitError(
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    message: string,
+  ) {
+    if (errorSent) return;
+    errorSent = true;
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: { message, type: "upstream_error" } })}\n\n`));
+  }
 
   function emitChunk(
     controller: ReadableStreamDefaultController<Uint8Array>,
@@ -461,6 +471,22 @@ export function transformResponsesStreamToChatStream(
           finish_reason: null,
         },
       ]);
+    } else if (type === "response.heartbeat") {
+      // A heartbeat carries no payload, but it must still produce bytes: a chat stream that goes
+      // silent for the server's idle window is closed mid-turn (observed at ~10s on the real
+      // upstream, whose heartbeats arrive every ~1s while it thinks).
+      controller.enqueue(encoder.encode(": keep-alive\n\n"));
+    } else if (type === "response.failed" || type === "error" || type === "response.incomplete") {
+      // The web turn can end in an upstream-side failure AFTER the stream has started.
+      // Surface it as a chat error frame instead of closing the connection mid-flight.
+      const resp = asObject(parsed.response);
+      const failure = asObject(parsed.error) ?? asObject(resp?.error);
+      const message = typeof failure?.message === "string"
+        ? failure.message
+        : typeof parsed.message === "string"
+          ? parsed.message
+          : `ChatGPT Web turn ended as ${type}`;
+      emitError(controller, message);
     } else if (type === "response.completed") {
       const resp = asObject(parsed.response);
       const usage = resp?.usage;
@@ -520,7 +546,19 @@ export function transformResponsesStreamToChatStream(
           }
         }
       } catch (err) {
-        controller.error(err);
+        // The upstream connection died mid-stream. The status line is already committed, so a
+        // stream that has NOT terminated yet ends with an explicit error frame plus the terminal
+        // marker; a truncation a client cannot distinguish from a complete turn is the one
+        // outcome worth avoiding. A break AFTER the upstream's own [DONE] is logged only —
+        // the client already saw a terminated turn.
+        const message = `ChatGPT Web upstream stream failed: ${err instanceof Error ? err.message : String(err)}`;
+        console.warn(`[external-layer] ${message}`);
+        if (!doneSent) {
+          emitError(controller, message);
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          doneSent = true;
+        }
+        controller.close();
       }
     },
     async cancel(reason) {

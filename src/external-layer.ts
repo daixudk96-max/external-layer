@@ -208,6 +208,41 @@ function tapStream(
   });
 }
 
+/** Terminate an in-flight SSE response with an explicit error frame rather than a broken transfer. */
+function terminateOnStreamFailure(
+  source: ReadableStream<Uint8Array>,
+  frame: (message: string) => Uint8Array,
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  const decoder = new TextDecoder();
+  let sawTerminalMarker = false;
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            controller.close();
+            break;
+          }
+          if (value) {
+            if (decoder.decode(value, { stream: true }).includes("[DONE]")) sawTerminalMarker = true;
+            controller.enqueue(value);
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[external-layer] upstream stream failed mid-flight: ${message}`);
+        if (!sawTerminalMarker) controller.enqueue(frame(message));
+        controller.close();
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason);
+    },
+  });
+}
+
 export async function startExternalLayer(config: ExternalLayerConfig): Promise<ExternalLayerHandle> {
   if (!process.env.NO_PROXY && (process.env.HTTP_PROXY || process.env.HTTPS_PROXY)) {
     process.env.NO_PROXY = "127.0.0.1,localhost";
@@ -220,6 +255,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
 
   const server = Bun.serve({
     port: config.port ?? 0,
+    // Bun closes an idle socket after 10s by default, which kills a long-thinking SSE turn:
+    // the upstream can sit behind its own heartbeats for minutes before the first delta.
+    idleTimeout: 240,
     async fetch(req) {
       const url = new URL(req.url);
       const isResponses = req.method === "POST" && url.pathname === "/v1/responses";
@@ -444,7 +482,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           });
 
           if (isResponses) {
-            return new Response(recordedStream, {
+            const clientStream = terminateOnStreamFailure(recordedStream, (message) =>
+              new TextEncoder().encode(
+                `event: error\ndata: ${JSON.stringify({ type: "error", message: `ChatGPT Web upstream stream failed: ${message}` })}\n\ndata: [DONE]\n\n`,
+              ),
+            );
+            return new Response(clientStream, {
               status: 200,
               headers: { "content-type": turnResult.contentType },
             });
