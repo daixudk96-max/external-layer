@@ -886,6 +886,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               body: fullText,
               contentType: turnResult.contentType,
             });
+            lastError = undefined;
           });
 
           if (isResponses) {
@@ -1127,6 +1128,10 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
         turnCompleted = true;
         if (abortUpstreamTurns) {
           req.signal.removeEventListener("abort", onClientAbort);
+        }
+
+        if (result.status === 200) {
+          lastError = undefined;
         }
 
         if (isChatCompletions && result.status === 200) {
