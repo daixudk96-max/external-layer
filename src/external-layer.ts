@@ -1,5 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { tierSlugForEffort, unifiedCatalog } from "./models";
+import { classifyEmptyCompletion, isTransientError, withTransientRetry } from "./reliability";
 
 /** External layer: a standard Responses API facade in front of the original codex-chatgpt-web upstream.
  * The upstream expects Codex-native requests authenticated with a ChatGPT OAuth bearer; this layer
@@ -21,11 +22,40 @@ export interface ExternalLayerConfig {
   /** Trusted Codex environment synthesized for envelope-less standard clients (the upstream
    * requires a cwd-bearing `<environment_context>` user message bound to the turn identity). */
   defaultEnvironment?: DefaultEnvironmentConfig;
+  /** 重试上限（缺省 5；0 = 关闭重试）。 */
+  transientRetryLimit?: number;
+  /** 重试等待时间毫秒（测试注入；缺省走 2000*attempt 退避）。 */
+  retrySleepMs?: number;
 }
 
 export interface ExternalLayerHandle {
   baseUrl: string;
   stop: () => Promise<void>;
+}
+
+class UpstreamHttpFailure extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly body: string,
+    public readonly contentType: string,
+  ) {
+    super(body);
+    this.name = "UpstreamHttpFailure";
+  }
+}
+
+class EmptyTurnError extends Error {
+  constructor(public readonly reason: string) {
+    super(`empty turn content: ${reason}`);
+    this.name = "EmptyTurnError";
+  }
+}
+
+class UpstreamNetworkError extends Error {
+  constructor(public readonly detail: string) {
+    super(`ChatGPT Web upstream is unreachable: ${detail}`);
+    this.name = "UpstreamNetworkError";
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -163,32 +193,144 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           );
         }
         const capabilities = { solAvailable: config.solAvailable ?? true, proAvailable: config.proAvailable ?? true };
-        const native = toNativeRequest(mapRequestModel(standard, capabilities), { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) });
-        let upstream: Response;
+
+        const retryLimit = config.transientRetryLimit === 0
+          ? 1
+          : (config.transientRetryLimit !== undefined && config.transientRetryLimit < 0)
+            ? 1
+            : (config.transientRetryLimit ?? 5);
+
+        const injectedSleepMs = config.retrySleepMs !== undefined
+          ? config.retrySleepMs
+          : (process.env.NODE_ENV === "test" ? 1 : undefined);
+
+        const retrySleep = injectedSleepMs !== undefined
+          ? async () => {
+              if (injectedSleepMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, injectedSleepMs));
+              }
+            }
+          : undefined;
+
         try {
-          upstream = await fetch(`${upstreamBase}/v1/responses`, {
-            method: "POST",
-            headers: {
-              authorization: `Bearer ${token}`,
-              "content-type": req.headers.get("content-type") ?? "application/json",
+          const response = await withTransientRetry(
+            async (_attempt) => {
+              const clonedStandard = JSON.parse(JSON.stringify(standard)) as Record<string, unknown>;
+              const native = toNativeRequest(
+                mapRequestModel(clonedStandard, capabilities),
+                { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
+              );
+
+              let upstream: Response;
+              try {
+                upstream = await fetch(`${upstreamBase}/v1/responses`, {
+                  method: "POST",
+                  headers: {
+                    authorization: `Bearer ${token}`,
+                    "content-type": req.headers.get("content-type") ?? "application/json",
+                  },
+                  body: JSON.stringify(native),
+                });
+              } catch (error) {
+                const detail = error instanceof Error ? error.message : "upstream unreachable";
+                throw new UpstreamNetworkError(detail);
+              }
+
+              const body = await upstream.text();
+              const contentType = upstream.headers.get("content-type") ?? "application/json";
+
+              if (upstream.status >= 400 && upstream.status < 500) {
+                lastError = `upstream ${upstream.status}`;
+                return new Response(body, { status: upstream.status, headers: { "content-type": contentType } });
+              }
+
+              if (upstream.status >= 500 || isTransientError(body)) {
+                throw new UpstreamHttpFailure(upstream.status, body, contentType);
+              }
+
+              if (!upstream.ok) {
+                lastError = `upstream ${upstream.status}`;
+                return new Response(body, { status: upstream.status, headers: { "content-type": contentType } });
+              }
+
+              let parsed: unknown;
+              try {
+                parsed = JSON.parse(body);
+              } catch {
+                return new Response(body, { status: upstream.status, headers: { "content-type": contentType } });
+              }
+
+              const verdict = classifyEmptyCompletion(parsed);
+              if (verdict.empty) {
+                throw new EmptyTurnError(verdict.reason ?? "completed turn produced no output and no tool calls");
+              }
+
+              return new Response(body, { status: upstream.status, headers: { "content-type": contentType } });
             },
-            body: JSON.stringify(native),
-          });
+            {
+              limit: retryLimit,
+              sleep: retrySleep,
+              isRetryable: (error: unknown) => {
+                if (error instanceof UpstreamHttpFailure) {
+                  return error.status >= 500 || isTransientError(error.body);
+                }
+                if (error instanceof EmptyTurnError) {
+                  return true;
+                }
+                if (error instanceof UpstreamNetworkError) {
+                  return isTransientError(error.detail);
+                }
+                return false;
+              },
+              onRetry: (attempt: number, message: string) => {
+                const family = isTransientError(message)
+                  ? "transient_error"
+                  : message.includes("empty turn content")
+                    ? "empty_turn_content"
+                    : "upstream_http_5xx";
+                console.warn(`[external-layer] transient retry attempt ${attempt}/${retryLimit} family=${family}`);
+              },
+            },
+          );
+          return response;
         } catch (error) {
-          lastError = error instanceof Error ? error.message : "upstream unreachable";
+          if (error instanceof UpstreamHttpFailure) {
+            lastError = `upstream ${error.status}`;
+            return new Response(error.body, { status: error.status, headers: { "content-type": error.contentType } });
+          }
+          if (error instanceof EmptyTurnError) {
+            lastError = "empty turn content";
+            return Response.json(
+              {
+                error: {
+                  message: "ChatGPT completed turn produced empty content",
+                  type: "server_error",
+                  code: "empty_turn_content",
+                },
+                code: "empty_turn_content",
+              },
+              { status: 502 },
+            );
+          }
+          if (error instanceof UpstreamNetworkError) {
+            lastError = error.detail;
+            return Response.json(
+              {
+                error: {
+                  message: `ChatGPT Web upstream is unreachable: ${lastError}`,
+                  type: "server_error",
+                  code: "upstream_unreachable",
+                },
+              },
+              { status: 502 },
+            );
+          }
+          lastError = error instanceof Error ? error.message : String(error);
           return Response.json(
-            { error: { message: `ChatGPT Web upstream is unreachable: ${lastError}`, type: "server_error", code: "upstream_unreachable" } },
-            { status: 502 },
+            { error: { message: `Internal server error: ${lastError}` } },
+            { status: 500 },
           );
         }
-        const body = await upstream.text();
-        const contentType = upstream.headers.get("content-type") ?? "application/json";
-        if (!upstream.ok) {
-          // Fail closed: the upstream's own failure is surfaced verbatim, never reshaped into success.
-          lastError = `upstream ${upstream.status}`;
-          return new Response(body, { status: upstream.status, headers: { "content-type": contentType } });
-        }
-        return new Response(body, { status: upstream.status, headers: { "content-type": contentType } });
       }
       if (req.method === "GET" && url.pathname === "/v1/models") {
         if (!bearerMatches(req.headers.get("authorization"), config.apiKey)) return unauthorized();
