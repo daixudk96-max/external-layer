@@ -9,7 +9,7 @@ import { CHATGPT_WEB_DEFAULT_TIER_EFFORT, CHATGPT_WEB_LATEST_MODEL_ID, deriveTie
 import { classifyEmptyCompletion, isTransientError, withTransientRetry } from "./reliability";
 import { resolveStallTimeoutSec, UpstreamStallError } from "./stall-timeout";
 import { resolveToolTimeouts, type ToolTimeoutsConfig } from "./tool-timeouts";
-import { readUpstreamBiggerContext, resolveUpstreamHome } from "./upstream-home";
+import { readUpstreamBiggerContext, readUpstreamControlToken, resolveUpstreamHome } from "./upstream-home";
 
 export { UpstreamStallError } from "./stall-timeout";
 
@@ -49,6 +49,8 @@ export interface ExternalLayerConfig {
   firstByteTimeoutMs?: number;
   /** 工具超时契约配置 */
   toolTimeouts?: Partial<ToolTimeoutsConfig>;
+  /** 客户端断连时是否向 upstream 发送 POST /admin/interrupt-turn 中断上游回合。缺省 true。 */
+  abortUpstreamTurns?: boolean;
 }
 
 export interface ExternalLayerHandle {
@@ -80,6 +82,64 @@ class UpstreamNetworkError extends Error {
   constructor(public readonly detail: string) {
     super(`ChatGPT Web upstream is unreachable: ${detail}`);
     this.name = "UpstreamNetworkError";
+  }
+}
+
+class ClientAbortedError extends Error {
+  constructor() {
+    super("client aborted request");
+    this.name = "ClientAbortedError";
+  }
+}
+
+function extractTurnIdentity(native: Record<string, unknown>): { threadId: string; turnId: string } | null {
+  if (!isRecord(native.client_metadata)) return null;
+  const raw = native.client_metadata["x-codex-turn-metadata"];
+  let meta: Record<string, unknown> | null = null;
+  if (isRecord(raw)) {
+    meta = raw;
+  } else if (typeof raw === "string") {
+    try {
+      meta = JSON.parse(raw);
+    } catch {
+      meta = null;
+    }
+  }
+  if (!meta) return null;
+  const threadId = typeof meta.thread_id === "string" ? meta.thread_id : "";
+  const turnId = typeof meta.turn_id === "string" ? meta.turn_id : "";
+  if (threadId && turnId) {
+    return { threadId, turnId };
+  }
+  return null;
+}
+
+async function interruptUpstreamTurn(
+  upstreamBaseUrl: string,
+  upstreamHome: string | undefined,
+  identity: { threadId: string; turnId: string },
+): Promise<void> {
+  try {
+    const effectiveHome = resolveUpstreamHome(upstreamHome);
+    const controlToken = readUpstreamControlToken(effectiveHome);
+    if (!controlToken) {
+      return;
+    }
+    const res = await fetch(`${upstreamBaseUrl.replace(/\/+$/, "")}/admin/interrupt-turn`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${controlToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        threadId: identity.threadId,
+        turnId: identity.turnId,
+      }),
+    });
+    await res.text().catch(() => {});
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`[external-layer] failed to interrupt upstream turn: ${msg.replace(/ctl-[A-Za-z0-9]+/g, "[REDACTED]")}`);
   }
 }
 
@@ -373,6 +433,78 @@ function terminateOnStreamFailure(
   });
 }
 
+function withClientAbortTermination(
+  source: ReadableStream<Uint8Array>,
+  signal: AbortSignal,
+  onAbort?: () => void,
+  onComplete?: () => void,
+): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let terminated = false;
+      const abortHandler = () => {
+        if (terminated) return;
+        terminated = true;
+        if (onAbort) onAbort();
+        try {
+          controller.close();
+        } catch {}
+        reader.cancel("client aborted").catch(() => {});
+      };
+
+      if (signal.aborted) {
+        abortHandler();
+        return;
+      }
+
+      signal.addEventListener("abort", abortHandler, { once: true });
+
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            terminated = true;
+            signal.removeEventListener("abort", abortHandler);
+            if (onComplete) onComplete();
+            try {
+              controller.close();
+            } catch {}
+            break;
+          }
+          if (signal.aborted) {
+            abortHandler();
+            break;
+          }
+          if (value) {
+            try {
+              controller.enqueue(value);
+            } catch {
+              abortHandler();
+              break;
+            }
+          }
+        }
+      } catch (error) {
+        signal.removeEventListener("abort", abortHandler);
+        if (signal.aborted) {
+          abortHandler();
+        } else {
+          try {
+            controller.error(error);
+          } catch {}
+        }
+      } finally {
+        signal.removeEventListener("abort", abortHandler);
+        reader.cancel("stream ended").catch(() => {});
+      }
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => {});
+    },
+  });
+}
+
 export async function startExternalLayer(config: ExternalLayerConfig): Promise<ExternalLayerHandle> {
   const resolvedToolTimeouts = resolveToolTimeouts(config.toolTimeouts, "external layer config");
   const effectiveStallTimeoutSec = resolveStallTimeoutSec(config.stallTimeoutSec);
@@ -534,6 +666,35 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               }
             }
           : undefined;
+        const abortUpstreamTurns = config.abortUpstreamTurns !== false;
+        let currentTurnIdentity: { threadId: string; turnId: string } | null = null;
+        let turnCompleted = false;
+        let interruptDispatched = false;
+        let currentAbortController: AbortController | null = null;
+
+        const triggerInterrupt = async () => {
+          if (!abortUpstreamTurns || turnCompleted || interruptDispatched) return;
+          if (!currentTurnIdentity) return;
+          interruptDispatched = true;
+          if (currentAbortController) {
+            try {
+              currentAbortController.abort("client aborted");
+            } catch {}
+          }
+          await interruptUpstreamTurn(upstreamBase, config.upstreamHome, currentTurnIdentity);
+        };
+
+        const onClientAbort = () => {
+          triggerInterrupt().catch(() => {});
+        };
+
+        if (abortUpstreamTurns) {
+          if (req.signal.aborted) {
+            onClientAbort();
+          } else {
+            req.signal.addEventListener("abort", onClientAbort, { once: true });
+          }
+        }
 
         if (isStreaming) {
           interface UpstreamStreamResult {
@@ -547,13 +708,28 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           try {
             turnResult = await withTransientRetry<UpstreamStreamResult>(
               async (_attempt) => {
+                if (abortUpstreamTurns && req.signal.aborted) {
+                  triggerInterrupt().catch(() => {});
+                  throw new ClientAbortedError();
+                }
                 const clonedStandard = JSON.parse(JSON.stringify(mappedResolution.mapped)) as Record<string, unknown>;
                 const native = toNativeRequest(
                   clonedStandard,
                   { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
                 );
+                const turnMeta = extractTurnIdentity(native);
+                if (turnMeta) {
+                  currentTurnIdentity = turnMeta;
+                }
+                if (abortUpstreamTurns && req.signal.aborted) {
+                  triggerInterrupt().catch(() => {});
+                  throw new ClientAbortedError();
+                }
 
                 const abortController = new AbortController();
+                if (abortUpstreamTurns) {
+                  currentAbortController = abortController;
+                }
                 let timedOut = false;
                 const timer = setTimeout(() => {
                   timedOut = true;
@@ -572,6 +748,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                     signal: abortController.signal,
                   });
                 } catch (error) {
+                  if (abortUpstreamTurns && req.signal.aborted) {
+                    throw new ClientAbortedError();
+                  }
                   if (timedOut || abortController.signal.aborted) {
                     throw new UpstreamStallError(
                       "first_byte",
@@ -583,6 +762,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   throw new UpstreamNetworkError(detail);
                 } finally {
                   clearTimeout(timer);
+                  if (currentAbortController === abortController) {
+                    currentAbortController = null;
+                  }
                 }
 
                 const contentType = upstream.headers.get("content-type") ?? "application/json";
@@ -605,6 +787,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 limit: retryLimit,
                 sleep: retrySleep,
                 isRetryable: (error: unknown) => {
+                  if (error instanceof ClientAbortedError || (abortUpstreamTurns && req.signal.aborted)) {
+                    return false;
+                  }
                   if (error instanceof UpstreamStallError && error.kind === "first_byte") {
                     return true;
                   }
@@ -636,6 +821,13 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               },
             );
           } catch (error) {
+            if (error instanceof ClientAbortedError || (abortUpstreamTurns && req.signal.aborted)) {
+              turnCompleted = true;
+              if (abortUpstreamTurns) {
+                req.signal.removeEventListener("abort", onClientAbort);
+              }
+              return new Response(null, { status: 499 });
+            }
             if (error instanceof UpstreamStallError) {
               lastError = `upstream stall timeout (${error.kind})`;
               turnResult = {
@@ -702,7 +894,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 `event: error\ndata: ${JSON.stringify({ type: "error", message: `ChatGPT Web upstream stream failed: ${message}` })}\n\ndata: [DONE]\n\n`,
               ),
             );
-            return new Response(clientStream, {
+            const wrappedStream = abortUpstreamTurns
+              ? withClientAbortTermination(clientStream, req.signal, onClientAbort, () => {
+                  turnCompleted = true;
+                })
+              : clientStream;
+            return new Response(wrappedStream, {
               status: 200,
               headers: {
                 "content-type": turnResult.contentType,
@@ -711,7 +908,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             });
           } else {
             const chatStream = transformResponsesStreamToChatStream(recordedStream, requestedModel);
-            return new Response(chatStream, {
+            const wrappedStream = abortUpstreamTurns
+              ? withClientAbortTermination(chatStream, req.signal, onClientAbort, () => {
+                  turnCompleted = true;
+                })
+              : chatStream;
+            return new Response(wrappedStream, {
               status: 200,
               headers: {
                 "content-type": "text/event-stream",
@@ -726,13 +928,28 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           try {
             const response = await withTransientRetry(
               async (_attempt) => {
+                if (abortUpstreamTurns && req.signal.aborted) {
+                  triggerInterrupt().catch(() => {});
+                  throw new ClientAbortedError();
+                }
                 const clonedStandard = JSON.parse(JSON.stringify(mappedResolution.mapped)) as Record<string, unknown>;
                 const native = toNativeRequest(
                   clonedStandard,
                   { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
                 );
+                const turnMeta = extractTurnIdentity(native);
+                if (turnMeta) {
+                  currentTurnIdentity = turnMeta;
+                }
+                if (abortUpstreamTurns && req.signal.aborted) {
+                  triggerInterrupt().catch(() => {});
+                  throw new ClientAbortedError();
+                }
 
                 const abortController = new AbortController();
+                if (abortUpstreamTurns) {
+                  currentAbortController = abortController;
+                }
                 let timedOut = false;
                 const timer = setTimeout(() => {
                   timedOut = true;
@@ -751,6 +968,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                     signal: abortController.signal,
                   });
                 } catch (error) {
+                  if (abortUpstreamTurns && req.signal.aborted) {
+                    throw new ClientAbortedError();
+                  }
                   if (timedOut || abortController.signal.aborted) {
                     throw new UpstreamStallError(
                       "first_byte",
@@ -762,6 +982,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   throw new UpstreamNetworkError(detail);
                 } finally {
                   clearTimeout(timer);
+                  if (currentAbortController === abortController) {
+                    currentAbortController = null;
+                  }
                 }
 
                 const body = await upstream.text();
@@ -799,6 +1022,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 limit: retryLimit,
                 sleep: retrySleep,
                 isRetryable: (error: unknown) => {
+                  if (error instanceof ClientAbortedError || (abortUpstreamTurns && req.signal.aborted)) {
+                    return false;
+                  }
                   if (error instanceof UpstreamStallError && error.kind === "first_byte") {
                     return true;
                   }
@@ -831,6 +1057,10 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             );
             return response;
           } catch (error) {
+            if (error instanceof ClientAbortedError || (abortUpstreamTurns && req.signal.aborted)) {
+              lastError = "client aborted";
+              return { status: 499, body: "", contentType: "application/json" };
+            }
             if (error instanceof UpstreamStallError) {
               lastError = `upstream stall timeout (${error.kind})`;
               return {
@@ -887,6 +1117,17 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             };
           }
         });
+
+        if (abortUpstreamTurns && (req.signal.aborted || result.status === 499)) {
+          turnCompleted = true;
+          req.signal.removeEventListener("abort", onClientAbort);
+          return new Response(null, { status: 499 });
+        }
+
+        turnCompleted = true;
+        if (abortUpstreamTurns) {
+          req.signal.removeEventListener("abort", onClientAbort);
+        }
 
         if (isChatCompletions && result.status === 200) {
           let parsed: unknown;

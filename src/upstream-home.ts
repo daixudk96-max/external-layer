@@ -29,3 +29,19 @@ export function readUpstreamBiggerContext(home: string): boolean | null {
     return null;
   }
 }
+export function readUpstreamControlToken(home: string): string | null {
+  try {
+    const configPath = join(home, "config.json");
+    if (!existsSync(configPath)) {
+      return null;
+    }
+    const content = readFileSync(configPath, "utf-8");
+    const parsed = JSON.parse(content);
+    if (parsed && typeof parsed === "object" && typeof parsed.controlToken === "string" && parsed.controlToken.trim().length > 0) {
+      return parsed.controlToken.trim();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
