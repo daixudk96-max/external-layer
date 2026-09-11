@@ -891,6 +891,10 @@ test("16: the follow-up round closes with an authoritative tool-result turn that
     const text = JSON.stringify(last?.content ?? "");
     expect(text).toContain("authoritative");
     expect(text.toLowerCase()).toContain("do not call the tool again");
+    // The result itself must ride in the text: the real-machine page prompt may never render the
+    // function_call_output item, and without the payload the model re-calls the tool and parks.
+    expect(text).toContain(INSIDE_TEXT);
+    expect(text).toContain("call_w11_nudge");
     expect(items.findIndex(item => item.type === "function_call_output")).toBeLessThan(items.length - 1);
   } finally {
     await layer.stop();

@@ -21,20 +21,35 @@ import {
 
 export { UpstreamStallError } from "./stall-timeout";
 
-/** Closing user turn for a server-side tool round: marks the tool result authoritative and
- * forbids another call, so the follow-up browser turn answers instead of re-calling the tool. */
-function toolResultNudge(): Record<string, unknown> {
+/** Closing user turn for a server-side tool round.
+ *
+ * Real-machine finding 2026-09-11: the follow-up round opens a FRESH browser turn, and the page
+ * then parks on a connector claim nobody answers. Two defences ride in this message: it forbids
+ * another call (mirroring w9-tool-roundtrip.py leg 2) and it carries the result IN THE TEXT, so the
+ * model can answer even if the upstream never renders the function_call_output item.
+ */
+function toolResultNudge(
+  results: Array<{ name: string; callId: string; payload: unknown }> = [],
+): Record<string, unknown> {
+  const rendered = results.length === 0
+    ? ""
+    : "\n\nTool results:\n" + results
+        .map((r) => `- ${r.name}${r.callId ? ` (${r.callId})` : ""} -> ${JSON.stringify(r.payload ?? {})}`)
+        .join("\n");
   return {
     type: "message",
     role: "user",
     content: [
       {
         type: "input_text",
-        text: "The tool result above is authoritative and complete. Answer the original request now using it, in plain text. Do not call the tool again.",
+        text:
+          "The tool result above is authoritative and complete." + rendered +
+          "\n\nAnswer the original request now using that result, in plain text. Do not call the tool again.",
       },
     ],
   };
 }
+
 export { type ServerToolsConfig } from "./server-tools";
 
 /** External layer: a standard Responses API facade in front of the original codex-chatgpt-web upstream.
@@ -824,6 +839,11 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 ? [...(currentStandard.input as Array<Record<string, unknown>>)]
                 : normalizeInput(currentStandard.input);
               let executedAny = false;
+              const executedResults: Array<{ name: string; callId: string; payload: unknown }> = [];
+              console.log(
+                `[external-layer] tool round ${round} (stream): function_calls=${functionCalls.length}` +
+                `${functionCalls.length > 0 ? ` (${functionCalls.map(fc => fc.callId).join(",")})` : ""}, approvals=${approvals}`,
+              );
 
               for (const fc of functionCalls) {
                 if (allowedToolsSet.has(fc.name)) {
@@ -845,6 +865,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                     output: exec.payload ?? {},
                   });
                   executedAny = true;
+                  executedResults.push({ name: fc.name, callId: fc.callId, payload: exec.payload ?? {} });
                 } else {
                   recordAudit(auditPath, {
                     tool: fc.name,
@@ -854,7 +875,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 }
               }
               if (executedAny) {
-                currentInputs.push(toolResultNudge());
+                currentInputs.push(toolResultNudge(executedResults));
               }
               currentStandard.input = currentInputs;
             }
@@ -1118,6 +1139,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               ? [...(currentStandard.input as Array<Record<string, unknown>>)]
               : normalizeInput(currentStandard.input);
             let executedAny = false;
+            const executedResults: Array<{ name: string; callId: string; payload: unknown }> = [];
+            console.log(
+              `[external-layer] tool round ${round}: upstream ${turn.status}, function_calls=${functionCalls.length}` +
+              `${functionCalls.length > 0 ? ` (${functionCalls.map(fc => String(fc.call_id ?? fc.id ?? "?")).join(",")})` : ""}, ` +
+              `approvals=${approvals}, allowed=${executableCalls.length}`,
+            );
 
             for (const fc of functionCalls) {
               const name = typeof fc.name === "string" ? fc.name : "";
@@ -1144,6 +1171,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   output: exec.payload ?? {},
                 });
                 executedAny = true;
+                executedResults.push({ name, callId, payload: exec.payload ?? {} });
               } else {
                 recordAudit(auditPath, {
                   tool: name,
@@ -1153,12 +1181,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               }
             }
             if (executedAny) {
-              // Real-machine finding 2026-09-11: the follow-up round opens a FRESH browser turn whose
-              // prompt still carries the original instruction ("call the tool first"), so the model
-              // calls the tool again, the page parks waiting for a connector result and the turn is
-              // aborted. The proven leg-2 payload always closed the chain with a user message that
-              // marks the result authoritative and forbids another call — mirror that here.
-              currentInputs.push(toolResultNudge());
+              currentInputs.push(toolResultNudge(executedResults));
             }
             currentStandard.input = currentInputs;
           }
