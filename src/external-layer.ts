@@ -9,48 +9,8 @@ import { CHATGPT_WEB_LATEST_MODEL_ID, tierSlugForEffort, unifiedCatalog, Unknown
 import { classifyEmptyCompletion, isTransientError, withTransientRetry } from "./reliability";
 import { resolveStallTimeoutSec, UpstreamStallError } from "./stall-timeout";
 import { resolveToolTimeouts, type ToolTimeoutsConfig } from "./tool-timeouts";
-import {
-  type ServerToolsConfig,
-  DEFAULT_ALLOWED_TOOLS,
-  DEFAULT_APPROVALS,
-  DEFAULT_MAX_ROUNDS,
-  executeServerTool,
-  recordAudit,
-  parseSseStream,
-} from "./server-tools";
 
 export { UpstreamStallError } from "./stall-timeout";
-
-/** Closing user turn for a server-side tool round.
- *
- * Real-machine finding 2026-09-11: the follow-up round opens a FRESH browser turn, and the page
- * then parks on a connector claim nobody answers. Two defences ride in this message: it forbids
- * another call (mirroring w9-tool-roundtrip.py leg 2) and it carries the result IN THE TEXT, so the
- * model can answer even if the upstream never renders the function_call_output item.
- */
-function toolResultNudge(
-  results: Array<{ name: string; callId: string; payload: unknown }> = [],
-): Record<string, unknown> {
-  const rendered = results.length === 0
-    ? ""
-    : "\n\nTool results:\n" + results
-        .map((r) => `- ${r.name}${r.callId ? ` (${r.callId})` : ""} -> ${JSON.stringify(r.payload ?? {})}`)
-        .join("\n");
-  return {
-    type: "message",
-    role: "user",
-    content: [
-      {
-        type: "input_text",
-        text:
-          "The tool result above is authoritative and complete." + rendered +
-          "\n\nAnswer the original request now using that result, in plain text. Do not call the tool again.",
-      },
-    ],
-  };
-}
-
-export { type ServerToolsConfig } from "./server-tools";
 
 /** External layer: a standard Responses API facade in front of the original codex-chatgpt-web upstream.
  * The upstream expects Codex-native requests authenticated with a ChatGPT OAuth bearer; this layer
@@ -86,8 +46,6 @@ export interface ExternalLayerConfig {
   firstByteTimeoutMs?: number;
   /** 工具超时契约配置 */
   toolTimeouts?: Partial<ToolTimeoutsConfig>;
-  /** 服务端工具执行配置 (w11-server-tools) */
-  serverTools?: ServerToolsConfig;
 }
 
 export interface ExternalLayerHandle {
@@ -391,16 +349,6 @@ function terminateOnStreamFailure(
   });
 }
 
-function textToStream(text: string): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(encoder.encode(text));
-      controller.close();
-    },
-  });
-}
-
 export async function startExternalLayer(config: ExternalLayerConfig): Promise<ExternalLayerHandle> {
   const resolvedToolTimeouts = resolveToolTimeouts(config.toolTimeouts, "external layer config");
   const effectiveStallTimeoutSec = resolveStallTimeoutSec(config.stallTimeoutSec);
@@ -547,30 +495,19 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             }
           : undefined;
 
-        const serverToolsCfg = config.serverTools;
-        const serverToolsOptedIn = Boolean(
-          serverToolsCfg?.enabled && standard.server_tools !== false,
-        );
-        const workspaceRoots = serverToolsCfg?.workspaceRoots ?? [];
-        const allowedToolsList = serverToolsCfg?.allowedTools ?? DEFAULT_ALLOWED_TOOLS;
-        const allowedToolsSet = new Set(allowedToolsList);
-        const approvals = serverToolsCfg?.approvals ?? DEFAULT_APPROVALS;
-        const auditPath = serverToolsCfg?.auditPath;
-        const maxRounds = serverToolsCfg?.maxRounds ?? DEFAULT_MAX_ROUNDS;
-        const toolResultTimeoutMs = resolvedToolTimeouts.toolResultTimeoutMs;
+        if (isStreaming) {
+          interface UpstreamStreamResult {
+            status: number;
+            bodyStream?: ReadableStream<Uint8Array>;
+            bodyText?: string;
+            contentType: string;
+          }
 
-        interface UpstreamStreamResult {
-          status: number;
-          bodyStream?: ReadableStream<Uint8Array>;
-          bodyText?: string;
-          contentType: string;
-        }
-
-        const executeStreamTurn = async (reqStandard: Record<string, unknown>): Promise<UpstreamStreamResult> => {
+          let turnResult: UpstreamStreamResult;
           try {
-            return await withTransientRetry<UpstreamStreamResult>(
+            turnResult = await withTransientRetry<UpstreamStreamResult>(
               async (_attempt) => {
-                const clonedStandard = JSON.parse(JSON.stringify(reqStandard)) as Record<string, unknown>;
+                const clonedStandard = JSON.parse(JSON.stringify(standard)) as Record<string, unknown>;
                 const native = toNativeRequest(
                   mapRequestModel(clonedStandard, capabilities),
                   { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
@@ -661,7 +598,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           } catch (error) {
             if (error instanceof UpstreamStallError) {
               lastError = `upstream stall timeout (${error.kind})`;
-              return {
+              turnResult = {
                 status: 504,
                 bodyText: JSON.stringify({
                   error: {
@@ -675,10 +612,10 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               };
             } else if (error instanceof UpstreamHttpFailure) {
               lastError = `upstream ${error.status}`;
-              return { status: error.status, bodyText: error.body, contentType: error.contentType };
+              turnResult = { status: error.status, bodyText: error.body, contentType: error.contentType };
             } else if (error instanceof UpstreamNetworkError) {
               lastError = error.detail;
-              return {
+              turnResult = {
                 status: 502,
                 bodyText: JSON.stringify({
                   error: {
@@ -691,220 +628,59 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               };
             } else {
               lastError = error instanceof Error ? error.message : String(error);
-              return {
+              turnResult = {
                 status: 500,
                 bodyText: JSON.stringify({ error: { message: `Internal server error: ${lastError}` } }),
                 contentType: "application/json",
               };
             }
           }
-        };
 
-        if (isStreaming) {
-          if (!serverToolsOptedIn) {
-            const turnResult = await executeStreamTurn(standard);
-            if (turnResult.status >= 400 || !turnResult.bodyStream) {
-              return new Response(turnResult.bodyText, {
-                status: turnResult.status,
-                headers: { "content-type": turnResult.contentType },
-              });
-            }
-
-            const watchdogStream = withStreamStallWatchdog(turnResult.bodyStream, effectiveStallTimeoutSec);
-            const recordedStream = tapStream(watchdogStream, (fullText) => {
-              idempotencyStore.save(idempotencyKey, {
-                status: 200,
-                body: fullText,
-                contentType: turnResult.contentType,
-              });
+          if (turnResult.status >= 400 || !turnResult.bodyStream) {
+            return new Response(turnResult.bodyText, {
+              status: turnResult.status,
+              headers: { "content-type": turnResult.contentType },
             });
+          }
 
-            if (isResponses) {
-              const clientStream = terminateOnStreamFailure(recordedStream, (message) =>
-                new TextEncoder().encode(
-                  `event: error\ndata: ${JSON.stringify({ type: "error", message: `ChatGPT Web upstream stream failed: ${message}` })}\n\ndata: [DONE]\n\n`,
-                ),
-              );
-              return new Response(clientStream, {
-                status: 200,
-                headers: { "content-type": turnResult.contentType },
-              });
-            } else {
-              const chatStream = transformResponsesStreamToChatStream(recordedStream, requestedModel);
-              return new Response(chatStream, {
-                status: 200,
-                headers: { "content-type": "text/event-stream" },
-              });
-            }
-          } else {
-            let currentStandard = JSON.parse(JSON.stringify(standard)) as Record<string, unknown>;
-            let round = 0;
+          // Record the upstream SSE text for BOTH routes: a chat client may replay the
+          // same key later (and a Responses replay of a chat-opened turn must be
+          // byte-identical), so the idempotency record is written from one tap that
+          // sits upstream of the client-specific transform.
+          const watchdogStream = withStreamStallWatchdog(turnResult.bodyStream, effectiveStallTimeoutSec);
+          const recordedStream = tapStream(watchdogStream, (fullText) => {
+            idempotencyStore.save(idempotencyKey, {
+              status: 200,
+              body: fullText,
+              contentType: turnResult.contentType,
+            });
+          });
 
-            while (round < maxRounds) {
-              round += 1;
-              const turnResult = await executeStreamTurn(currentStandard);
-              if (turnResult.status >= 400 || !turnResult.bodyStream) {
-                return new Response(turnResult.bodyText, {
-                  status: turnResult.status,
-                  headers: { "content-type": turnResult.contentType },
-                });
-              }
-
-              const parsed = await parseSseStream(turnResult.bodyStream);
-              const functionCalls = parsed.functionCalls;
-
-              if (functionCalls.length === 0) {
-                idempotencyStore.save(idempotencyKey, {
-                  status: 200,
-                  body: parsed.rawText,
-                  contentType: turnResult.contentType,
-                });
-                const clientStream = textToStream(parsed.rawText);
-                if (isResponses) {
-                  return new Response(clientStream, {
-                    status: 200,
-                    headers: { "content-type": turnResult.contentType },
-                  });
-                } else {
-                  const chatStream = transformResponsesStreamToChatStream(clientStream, requestedModel);
-                  return new Response(chatStream, {
-                    status: 200,
-                    headers: { "content-type": "text/event-stream" },
-                  });
-                }
-              }
-
-              if (approvals !== "auto") {
-                for (const fc of functionCalls) {
-                  recordAudit(auditPath, {
-                    tool: fc.name || "unknown",
-                    outcome: "delegated",
-                    durationMs: 0,
-                  });
-                }
-                const clientStream = textToStream(parsed.rawText);
-                if (isResponses) {
-                  return new Response(clientStream, {
-                    status: 200,
-                    headers: { "content-type": turnResult.contentType },
-                  });
-                } else {
-                  const chatStream = transformResponsesStreamToChatStream(clientStream, requestedModel);
-                  return new Response(chatStream, {
-                    status: 200,
-                    headers: { "content-type": "text/event-stream" },
-                  });
-                }
-              }
-
-              const executableCalls = functionCalls.filter(fc => allowedToolsSet.has(fc.name));
-              if (executableCalls.length === 0) {
-                for (const fc of functionCalls) {
-                  recordAudit(auditPath, {
-                    tool: fc.name || "unknown",
-                    outcome: "delegated",
-                    durationMs: 0,
-                  });
-                }
-                const clientStream = textToStream(parsed.rawText);
-                if (isResponses) {
-                  return new Response(clientStream, {
-                    status: 200,
-                    headers: { "content-type": turnResult.contentType },
-                  });
-                } else {
-                  const chatStream = transformResponsesStreamToChatStream(clientStream, requestedModel);
-                  return new Response(chatStream, {
-                    status: 200,
-                    headers: { "content-type": "text/event-stream" },
-                  });
-                }
-              }
-
-              if (round >= maxRounds) {
-                return Response.json(
-                  {
-                    error: {
-                      message: "Tool loop reached maximum allowed rounds",
-                      type: "server_error",
-                      code: "tool_round_limit",
-                    },
-                    code: "tool_round_limit",
-                  },
-                  { status: 502 },
-                );
-              }
-
-              const currentInputs = Array.isArray(currentStandard.input)
-                ? [...(currentStandard.input as Array<Record<string, unknown>>)]
-                : normalizeInput(currentStandard.input);
-              let executedAny = false;
-              const executedResults: Array<{ name: string; callId: string; payload: unknown }> = [];
-              console.log(
-                `[external-layer] tool round ${round} (stream): function_calls=${functionCalls.length}` +
-                `${functionCalls.length > 0 ? ` (${functionCalls.map(fc => fc.callId).join(",")})` : ""}, approvals=${approvals}`,
-              );
-
-              for (const fc of functionCalls) {
-                if (allowedToolsSet.has(fc.name)) {
-                  const exec = await executeServerTool(fc.name, fc.args, {
-                    workspaceRoots,
-                    toolResultTimeoutMs,
-                    auditPath,
-                  });
-                  // Same call-chain requirement as the non-streaming path below.
-                  currentInputs.push({
-                    type: "function_call",
-                    call_id: fc.callId,
-                    name: fc.name,
-                    arguments: typeof fc.args === "string" ? fc.args : JSON.stringify(fc.args ?? {}),
-                  });
-                  currentInputs.push({
-                    type: "function_call_output",
-                    call_id: fc.callId,
-                    output: exec.payload ?? {},
-                  });
-                  executedAny = true;
-                  executedResults.push({ name: fc.name, callId: fc.callId, payload: exec.payload ?? {} });
-                } else {
-                  recordAudit(auditPath, {
-                    tool: fc.name,
-                    outcome: "delegated",
-                    durationMs: 0,
-                  });
-                }
-              }
-              if (executedAny) {
-                currentInputs.push(toolResultNudge(executedResults));
-              }
-              currentStandard.input = currentInputs;
-            }
-
-            return Response.json(
-              {
-                error: {
-                  message: "Tool loop reached maximum allowed rounds",
-                  type: "server_error",
-                  code: "tool_round_limit",
-                },
-                code: "tool_round_limit",
-              },
-              { status: 502 },
+          if (isResponses) {
+            const clientStream = terminateOnStreamFailure(recordedStream, (message) =>
+              new TextEncoder().encode(
+                `event: error\ndata: ${JSON.stringify({ type: "error", message: `ChatGPT Web upstream stream failed: ${message}` })}\n\ndata: [DONE]\n\n`,
+              ),
             );
+            return new Response(clientStream, {
+              status: 200,
+              headers: { "content-type": turnResult.contentType },
+            });
+          } else {
+            const chatStream = transformResponsesStreamToChatStream(recordedStream, requestedModel);
+            return new Response(chatStream, {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            });
           }
         }
 
-        interface UpstreamNonStreamResult {
-          status: number;
-          body: string;
-          contentType: string;
-        }
-
-        const executeNonStreamTurn = async (reqStandard: Record<string, unknown>): Promise<UpstreamNonStreamResult> => {
+        // 非流式请求
+        const result = await idempotencyStore.runWithDeduplication(idempotencyKey, async () => {
           try {
-            return await withTransientRetry(
+            const response = await withTransientRetry(
               async (_attempt) => {
-                const clonedStandard = JSON.parse(JSON.stringify(reqStandard)) as Record<string, unknown>;
+                const clonedStandard = JSON.parse(JSON.stringify(standard)) as Record<string, unknown>;
                 const native = toNativeRequest(
                   mapRequestModel(clonedStandard, capabilities),
                   { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
@@ -1007,6 +783,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 },
               },
             );
+            return response;
           } catch (error) {
             if (error instanceof UpstreamStallError) {
               lastError = `upstream stall timeout (${error.kind})`;
@@ -1063,141 +840,6 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               contentType: "application/json",
             };
           }
-        };
-
-        // 非流式请求
-        const result = await idempotencyStore.runWithDeduplication(idempotencyKey, async () => {
-          if (!serverToolsOptedIn) {
-            return await executeNonStreamTurn(standard);
-          }
-
-          let currentStandard = JSON.parse(JSON.stringify(standard)) as Record<string, unknown>;
-          let round = 0;
-
-          while (round < maxRounds) {
-            round += 1;
-            const turn = await executeNonStreamTurn(currentStandard);
-            if (turn.status >= 400) {
-              return turn;
-            }
-            let parsed: unknown;
-            try {
-              parsed = JSON.parse(turn.body);
-            } catch {
-              return turn;
-            }
-            const outputItems = isRecord(parsed) && Array.isArray(parsed.output) ? parsed.output : [];
-            const functionCalls = outputItems.filter(
-              (item): item is Record<string, unknown> => isRecord(item) && item.type === "function_call",
-            );
-
-            if (functionCalls.length === 0) {
-              return turn;
-            }
-
-            if (approvals !== "auto") {
-              for (const fc of functionCalls) {
-                recordAudit(auditPath, {
-                  tool: typeof fc.name === "string" ? fc.name : "unknown",
-                  outcome: "delegated",
-                  durationMs: 0,
-                });
-              }
-              return turn;
-            }
-
-            const executableCalls = functionCalls.filter(fc =>
-              allowedToolsSet.has(typeof fc.name === "string" ? fc.name : ""),
-            );
-            if (executableCalls.length === 0) {
-              for (const fc of functionCalls) {
-                recordAudit(auditPath, {
-                  tool: typeof fc.name === "string" ? fc.name : "unknown",
-                  outcome: "delegated",
-                  durationMs: 0,
-                });
-              }
-              return turn;
-            }
-
-            if (round >= maxRounds) {
-              return {
-                status: 502,
-                body: JSON.stringify({
-                  error: {
-                    message: "Tool loop reached maximum allowed rounds",
-                    type: "server_error",
-                    code: "tool_round_limit",
-                  },
-                  code: "tool_round_limit",
-                }),
-                contentType: "application/json",
-              };
-            }
-
-            const currentInputs = Array.isArray(currentStandard.input)
-              ? [...(currentStandard.input as Array<Record<string, unknown>>)]
-              : normalizeInput(currentStandard.input);
-            let executedAny = false;
-            const executedResults: Array<{ name: string; callId: string; payload: unknown }> = [];
-            console.log(
-              `[external-layer] tool round ${round}: upstream ${turn.status}, function_calls=${functionCalls.length}` +
-              `${functionCalls.length > 0 ? ` (${functionCalls.map(fc => String(fc.call_id ?? fc.id ?? "?")).join(",")})` : ""}, ` +
-              `approvals=${approvals}, allowed=${executableCalls.length}`,
-            );
-
-            for (const fc of functionCalls) {
-              const name = typeof fc.name === "string" ? fc.name : "";
-              const callId = typeof fc.call_id === "string" ? fc.call_id : typeof fc.id === "string" ? fc.id : "";
-              if (allowedToolsSet.has(name)) {
-                const exec = await executeServerTool(name, fc.arguments, {
-                  workspaceRoots,
-                  toolResultTimeoutMs,
-                  auditPath,
-                });
-                // The follow-up round must replay the call chain itself: the upstream pairs a tool
-                // result with the browser turn that produced the call through the function_call item,
-                // so an output without its matching call leaves that turn parked forever (real-machine
-                // finding 2026-09-11 — the client-side leg-2 payload always carried both).
-                currentInputs.push({
-                  type: "function_call",
-                  call_id: callId,
-                  name,
-                  arguments: typeof fc.arguments === "string" ? fc.arguments : JSON.stringify(fc.arguments ?? {}),
-                });
-                currentInputs.push({
-                  type: "function_call_output",
-                  call_id: callId,
-                  output: exec.payload ?? {},
-                });
-                executedAny = true;
-                executedResults.push({ name, callId, payload: exec.payload ?? {} });
-              } else {
-                recordAudit(auditPath, {
-                  tool: name,
-                  outcome: "delegated",
-                  durationMs: 0,
-                });
-              }
-            }
-            if (executedAny) {
-              currentInputs.push(toolResultNudge(executedResults));
-            }
-            currentStandard.input = currentInputs;
-          }
-
-          return {
-            status: 502,
-            body: JSON.stringify({
-              error: {
-                message: "Tool loop reached maximum allowed rounds",
-                type: "server_error",
-                code: "tool_round_limit",
-              },
-              code: "tool_round_limit",
-            }),
-            contentType: "application/json",
-          };
         });
 
         if (isChatCompletions && result.status === 200) {

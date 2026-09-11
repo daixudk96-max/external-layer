@@ -5,11 +5,6 @@
   "refCommit": "5b431936bea226504c5a94040e736f62149bb334",
   "entries": [
     {
-      "path": "w11-server-tools.test.ts",
-      "sha256": "e17cb655b54484fc37ee1d95d800b661cbf2bf0b857530b7f22915789d1ecb64",
-      "size": 30823
-    },
-    {
       "path": "w12-gap-matrix.test.ts",
       "sha256": "d008814d0ba4259ef4211fd5ea5910500cab9b037eeb83cb5b03e8db733d7534",
       "size": 7313
