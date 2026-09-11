@@ -825,3 +825,75 @@ test("14: with allowedTools omitted the documented default still executes read_f
     up.stop();
   }
 });
+
+test("15: the follow-up round carries the function_call item before its function_call_output", async () => {
+  const up = toolThenFinalUpstream({
+    name: "read_file",
+    callId: "call_w11_chain",
+    args: { path: "inside.txt" },
+    finalText: "W11_CHAIN_FINAL",
+  });
+  const layer = await startLayer({
+    upstreamBaseUrl: up.url,
+    defaultEnvironment: ENVIRONMENT,
+    serverTools: { enabled: true, workspaceRoots: [workspaceRoot], allowedTools: ["read_file"], approvals: "auto" },
+  });
+  try {
+    const res = await post(layer.baseUrl);
+    expect(res.status).toBe(200);
+    expect(up.stats.calls).toBe(2);
+
+    // Real-machine contract (w11 probe 2026-09-11): the upstream pairs a tool result with the
+    // browser turn that produced the call THROUGH THE CALL CHAIN in the input. Sending only the
+    // function_call_output leaves the parked browser turn unmatched, so the follow-up round never
+    // completes. The function_call item must therefore precede its own function_call_output,
+    // exactly as the proven leg-2 payload does.
+    const items = inputItems(up.stats.bodies[1] ?? {});
+    const callIndex = items.findIndex(item => item.type === "function_call" && item.call_id === "call_w11_chain");
+    const outputIndex = items.findIndex(item => item.type === "function_call_output" && item.call_id === "call_w11_chain");
+
+    expect(callIndex).toBeGreaterThanOrEqual(0);
+    expect(outputIndex).toBeGreaterThan(callIndex);
+    expect(items[callIndex]?.name).toBe("read_file");
+    expect(JSON.parse(String(items[callIndex]?.arguments))).toEqual({ path: "inside.txt" });
+    expect(payloadOf(items[outputIndex]).content).toBe(INSIDE_TEXT);
+  } finally {
+    await layer.stop();
+    up.stop();
+  }
+});
+
+test("16: the follow-up round closes with an authoritative tool-result turn that forbids another call", async () => {
+  const up = toolThenFinalUpstream({
+    name: "read_file",
+    callId: "call_w11_nudge",
+    args: { path: "inside.txt" },
+    finalText: "W11_NUDGE_FINAL",
+  });
+  const layer = await startLayer({
+    upstreamBaseUrl: up.url,
+    defaultEnvironment: ENVIRONMENT,
+    serverTools: { enabled: true, workspaceRoots: [workspaceRoot], allowedTools: ["read_file"], approvals: "auto" },
+  });
+  try {
+    const res = await post(layer.baseUrl);
+    expect(res.status).toBe(200);
+    expect(up.stats.calls).toBe(2);
+
+    // Real-machine contract (w11 probe 2026-09-11): the follow-up round opens a FRESH browser turn
+    // that still carries the original "call the tool first" instruction, so without a closing
+    // user turn the model re-calls the tool, the page parks and the turn is aborted. The chain must
+    // therefore end with the authoritative-result nudge.
+    const items = inputItems(up.stats.bodies[1] ?? {});
+    const last = items[items.length - 1];
+    expect(last?.type).toBe("message");
+    expect(last?.role).toBe("user");
+    const text = JSON.stringify(last?.content ?? "");
+    expect(text).toContain("authoritative");
+    expect(text.toLowerCase()).toContain("do not call the tool again");
+    expect(items.findIndex(item => item.type === "function_call_output")).toBeLessThan(items.length - 1);
+  } finally {
+    await layer.stop();
+    up.stop();
+  }
+});

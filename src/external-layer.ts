@@ -20,6 +20,21 @@ import {
 } from "./server-tools";
 
 export { UpstreamStallError } from "./stall-timeout";
+
+/** Closing user turn for a server-side tool round: marks the tool result authoritative and
+ * forbids another call, so the follow-up browser turn answers instead of re-calling the tool. */
+function toolResultNudge(): Record<string, unknown> {
+  return {
+    type: "message",
+    role: "user",
+    content: [
+      {
+        type: "input_text",
+        text: "The tool result above is authoritative and complete. Answer the original request now using it, in plain text. Do not call the tool again.",
+      },
+    ],
+  };
+}
 export { type ServerToolsConfig } from "./server-tools";
 
 /** External layer: a standard Responses API facade in front of the original codex-chatgpt-web upstream.
@@ -808,6 +823,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               const currentInputs = Array.isArray(currentStandard.input)
                 ? [...(currentStandard.input as Array<Record<string, unknown>>)]
                 : normalizeInput(currentStandard.input);
+              let executedAny = false;
 
               for (const fc of functionCalls) {
                 if (allowedToolsSet.has(fc.name)) {
@@ -816,11 +832,19 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                     toolResultTimeoutMs,
                     auditPath,
                   });
+                  // Same call-chain requirement as the non-streaming path below.
+                  currentInputs.push({
+                    type: "function_call",
+                    call_id: fc.callId,
+                    name: fc.name,
+                    arguments: typeof fc.args === "string" ? fc.args : JSON.stringify(fc.args ?? {}),
+                  });
                   currentInputs.push({
                     type: "function_call_output",
                     call_id: fc.callId,
                     output: exec.payload ?? {},
                   });
+                  executedAny = true;
                 } else {
                   recordAudit(auditPath, {
                     tool: fc.name,
@@ -828,6 +852,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                     durationMs: 0,
                   });
                 }
+              }
+              if (executedAny) {
+                currentInputs.push(toolResultNudge());
               }
               currentStandard.input = currentInputs;
             }
@@ -1090,6 +1117,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             const currentInputs = Array.isArray(currentStandard.input)
               ? [...(currentStandard.input as Array<Record<string, unknown>>)]
               : normalizeInput(currentStandard.input);
+            let executedAny = false;
 
             for (const fc of functionCalls) {
               const name = typeof fc.name === "string" ? fc.name : "";
@@ -1100,11 +1128,22 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   toolResultTimeoutMs,
                   auditPath,
                 });
+                // The follow-up round must replay the call chain itself: the upstream pairs a tool
+                // result with the browser turn that produced the call through the function_call item,
+                // so an output without its matching call leaves that turn parked forever (real-machine
+                // finding 2026-09-11 — the client-side leg-2 payload always carried both).
+                currentInputs.push({
+                  type: "function_call",
+                  call_id: callId,
+                  name,
+                  arguments: typeof fc.arguments === "string" ? fc.arguments : JSON.stringify(fc.arguments ?? {}),
+                });
                 currentInputs.push({
                   type: "function_call_output",
                   call_id: callId,
                   output: exec.payload ?? {},
                 });
+                executedAny = true;
               } else {
                 recordAudit(auditPath, {
                   tool: name,
@@ -1112,6 +1151,14 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   durationMs: 0,
                 });
               }
+            }
+            if (executedAny) {
+              // Real-machine finding 2026-09-11: the follow-up round opens a FRESH browser turn whose
+              // prompt still carries the original instruction ("call the tool first"), so the model
+              // calls the tool again, the page parks waiting for a connector result and the turn is
+              // aborted. The proven leg-2 payload always closed the chain with a user message that
+              // marks the result authoritative and forbids another call — mirror that here.
+              currentInputs.push(toolResultNudge());
             }
             currentStandard.input = currentInputs;
           }
