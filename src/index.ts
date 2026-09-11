@@ -19,6 +19,21 @@ const defaultEnvironment = {
   sandboxMode: process.env.EXT_LAYER_SANDBOX ?? "danger-full-access",
 };
 
+const serverTools = process.env.EXT_LAYER_TOOLS === "1"
+  ? {
+      enabled: true,
+      workspaceRoots: (process.env.EXT_LAYER_TOOLS_ROOTS ?? defaultEnvironment.workspaceRoots.join(";"))
+        .split(";")
+        .filter(Boolean),
+      allowedTools: process.env.EXT_LAYER_TOOLS_ALLOW
+        ? process.env.EXT_LAYER_TOOLS_ALLOW.split(",").map(t => t.trim()).filter(Boolean)
+        : undefined,
+      approvals: (process.env.EXT_LAYER_TOOLS_APPROVALS as "auto" | "deny") || undefined,
+      auditPath: process.env.EXT_LAYER_TOOLS_AUDIT,
+      maxRounds: process.env.EXT_LAYER_TOOLS_MAX_ROUNDS ? Number(process.env.EXT_LAYER_TOOLS_MAX_ROUNDS) : undefined,
+    }
+  : undefined;
+
 const layer = await startExternalLayer({
   apiKey,
   upstreamBaseUrl,
@@ -28,6 +43,7 @@ const layer = await startExternalLayer({
   statePath,
   stallTimeoutSec,
   firstByteTimeoutMs,
+  serverTools,
 });
 console.log(
   `[external-layer] listening on ${layer.baseUrl}/v1 (upstream ${upstreamBaseUrl}) [stall=${layer.stallTimeoutSec}s firstByte=${layer.firstByteTimeoutMs}ms]`,

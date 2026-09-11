@@ -1,0 +1,313 @@
+=== WAVE W12 UPSTREAM GAP SWEEP AUDIT ===
+Target Upstream Repository: E:/github/ccw-upstream
+Upstream HEAD Commit: e85e3693fdb4e3e033348c08df0298c20fcdb612
+Local Legacy Line: E:/github/chatgpt-web-2-api/provider/codex-chatgpt-web/src
+External Layer: E:/github/chatgpt-web-2-api/external-layer/src
+
+=== 1. UPSTREAM COMMITS AUDIT ===
+
+[marker-personalization-509cfc9] Upstream commit 509cfc9:
+509cfc9 fix: recognize Chinese temporary-chat personalization controls (#402)
+commit 509cfc97285cc6793af5c0e161153db0b405a767
+Author: Julian <148066842+JulianZJN@users.noreply.github.com>
+Date:   Tue Sep 8 17:38:33 2026 +0800
+
+    fix: recognize Chinese temporary-chat personalization controls (#402)
+    
+    * fix: recognize Chinese temporary-chat personalization labels
+    
+    * test: support regex names in personalization contract fixtures
+    
+    ---------
+    
+    Co-authored-by: JulianZ <Apple@Julian-MBP-3.local>
+
+ src/adapters/chatgpt-web/browser-worker.ts        |  6 ++--
+ tests/browser-worker-contract.test.ts             | 10 +++++--
+ tests/personalization-connector-preflight.test.ts | 36 ++++++++++++++++-------
+ 3 files changed, 36 insertions(+), 16 deletions(-)
+Identifier sweep in upstream: ensureChatGptPersonalizedConnectorAccess
+src/adapters/chatgpt-web/browser-worker.ts:504:async function ensureChatGptPersonalizedConnectorAccessWithinDeadline(
+src/adapters/chatgpt-web/browser-worker.ts:643:export async function ensureChatGptPersonalizedConnectorAccess(
+src/adapters/chatgpt-web/browser-worker.ts:660:    return await ensureChatGptPersonalizedConnectorAccessWithinDeadline(
+src/adapters/chatgpt-web/browser-worker.ts:3045:    await ensureChatGptPersonalizedConnectorAccess(
+tests/browser-worker-contract.test.ts:8:import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/browser-worker";
+tests/browser-worker-contract.test.ts:343:    signal => ensureChatGptPersonalizedConnectorAccess(page, undefined, undefined, signal),
+tests/personalization-connector-preflight.test.ts:2:import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/browser-worker";
+tests/personalization-connector-preflight.test.ts:32:  expect(await ensureChatGptPersonalizedConnectorAccess(
+tests/personalization-connector-preflight.test.ts:44:  await expect(ensureChatGptPersonalizedConnectorAccess(
+tests/personalization-connector-preflight.test.ts:120:  expect(await ensureChatGptPersonalizedConnectorAccess(
+tests/personalization-connector-preflight.test.ts:139:  expect(await ensureChatGptPersonalizedConnectorAccess(
+tests/personalization-connector-preflight.test.ts:208:  expect(await ensureChatGptPersonalizedConnectorAccess(
+tests/personalization-connector-preflight.test.ts:306:  expect(await (ensureChatGptPersonalizedConnectorAccess as any)(
+tests/personalization-connector-preflight.test.ts:343:  const preflight = (ensureChatGptPersonalizedConnectorAccess as any)(
+tests/personalization-connector-preflight.test.ts:423:  const preflight = (ensureChatGptPersonalizedConnectorAccess as any)(
+tests/personalization-connector-preflight.test.ts:477:  await expect((ensureChatGptPersonalizedConnectorAccess as any)(
+tests/personalization-connector-preflight.test.ts:533:  const preflight = (ensureChatGptPersonalizedConnectorAccess as any)(
+tests/personalization-connector-preflight.test.ts:580:  await expect(ensureChatGptPersonalizedConnectorAccess(page)).rejects.toMatchObject({
+tests/personalization-connector-preflight.test.ts:598:    await expect(ensureChatGptPersonalizedConnectorAccess({ getByRole: () => absent } as any))
+tests/personalization-connector-preflight.test.ts:657:      await (ensureChatGptPersonalizedConnectorAccess as any)(
+tests/personalization-connector-preflight.test.ts:685:  await expect(ensureChatGptPersonalizedConnectorAccess(page)).rejects.toMatchObject({
+Sweep result for ensureChatGptPersonalizedConnectorAccess: PRESENT in local and upstream
+
+[marker-chunked-prompt-bda266b] Upstream commit bda266b:
+bda266b fix: stabilize browser prompt and login flows
+commit bda266b45c0e9d73c7a6e932a7c556954f9cea9c
+Author: vechen <147659719+miuuyy@users.noreply.github.com>
+Date:   Tue Aug 11 11:46:39 2026 +0300
+
+    fix: stabilize browser prompt and login flows
+
+ .github/workflows/release.yml              |   1 -
+ LICENSES/NOTICE.md                         |   9 --
+ launcher/electron/browser-host.cjs         |  11 +-
+ launcher/package.json                      |   2 +-
+ launcher/tests/browser-host.test.cjs       |  47 ++++++++
+ package.json                               |   2 +-
+ scripts/generate-third-party-notices.ts    |   1 -
+ scripts/install.sh                         |   6 +-
+ src/adapters/chatgpt-web/browser-worker.ts | 149 +++++++++++++++++++++---
+ src/browser-login.ts                       |  11 +-
+ src/chatgpt-session.ts                     |  40 +++++++
+ src/version.ts                             |   2 +-
+ tests/browser-worker-contract.test.ts      | 179 ++++++++++++++++++++++++++++-
+ tests/chatgpt-session.test.ts              |  60 ++++++++++
+ 14 files changed, 474 insertions(+), 46 deletions(-)
+Identifier sweep in upstream: CHATGPT_PROMPT_INSERT_CHUNK_CHARS
+Not found via git grep in upstream
+Sweep result for CHATGPT_PROMPT_INSERT_CHUNK_CHARS: ABSENT in local legacy line
+
+[marker-defer-answer-4b1714d] Upstream commit 4b1714d:
+4b1714d fix: defer final answer across MCP tool calls
+commit 4b1714dfbf6e8adbc5584d7c0790eee075b3c178
+Author: vechen <147659719+miuuyy@users.noreply.github.com>
+Date:   Mon Aug 24 04:54:21 2026 +0300
+
+    fix: defer final answer across MCP tool calls
+
+ src/adapters/chatgpt-web/browser-worker.ts |  9 ++++++++-
+ src/adapters/chatgpt-web/markdown.ts       |  7 ++++++-
+ tests/browser-worker-contract.test.ts      |  3 ++-
+ tests/chatgpt-web-harness.test.ts          | 14 ++++++++++++++
+ 4 files changed, 30 insertions(+), 3 deletions(-)
+Identifier sweep in upstream: streamCompletedBlocks
+Not found via git grep in upstream
+Sweep result for streamCompletedBlocks: ABSENT in local legacy line
+
+=== 2. LEGACY-ONLY MODULES IDENTIFIER SWEEP ===
+
+=== SECTION: browser-tab-pool ===
+Exported identifiers count: 8
+-- Identifier: TabPoolEvictor --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: TabPoolEvictEvent --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: BrowserTabPoolOptions --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: AcquireOptions --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: PoolLease --
+Upstream occurrences: none
+External layer occurrences: none
+
+=== SECTION: chat-mode-guard ===
+Exported identifiers count: 12
+-- Identifier: ChatSurfaceEvidence --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ChatSurfaceState --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: IMPLICIT_CHAT_COMPOSER_ARIA_LABELS --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: readChatSurfaceState --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ChatModeGuardDecisionKind --
+Upstream occurrences: none
+External layer occurrences: none
+
+=== SECTION: family-effort-verifier ===
+Exported identifiers count: 26
+-- Identifier: ModelSelectionSlugStatus --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ModelSelectionVerificationStage --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ModelSelectionVerifiedAt --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: RequestedTarget --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: UiVerifiedTarget --
+Upstream occurrences: none
+External layer occurrences: none
+
+=== SECTION: prodex-slider-driver ===
+Exported identifiers count: 23
+-- Identifier: CanonicalEffortDisplayLabel --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: POWER_LABEL_SYNONYMS --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: EFFORT_MENU_LABELS --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: canonicalPowerLabel --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: powerLabelMatches --
+Upstream occurrences: none
+External layer occurrences: none
+
+=== SECTION: capability-matrix ===
+Exported identifiers count: 22
+-- Identifier: CHATGPT_WEB_SOL_MODEL_FAMILY --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: CHATGPT_WEB_LUNA_MODEL_FAMILY --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: CapabilitySnapshotSource --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ConnectorProbeState --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: CapabilityFamilyEntry --
+Upstream occurrences: none
+External layer occurrences: none
+
+=== SECTION: chat-completions ===
+Exported identifiers count: 18
+-- Identifier: ChatConversionFailure --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ChatRequestConversion --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: chatRequestToResponsesIR --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ChatUsage --
+Upstream occurrences:
+src/dev-chat/driver.ts:26:  type DevChatUsage,
+src/dev-chat/driver.ts:52:  usage: DevChatUsage;
+src/dev-chat/driver.ts:349:function usageOf(response: ResponsesEnvelope): DevChatUsage {
+src/dev-chat/driver.ts:510:    const usage: DevChatUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+src/dev-chat/session.ts:41:export interface DevChatUsage {
+src/dev-chat/session.ts:59:  lastUsage?: DevChatUsage;
+External layer occurrences: none
+-- Identifier: ChatToolCall --
+Upstream occurrences: none
+External layer occurrences: none
+
+=== SECTION: run-coordinator ===
+Exported identifiers count: 14
+-- Identifier: RunStatus --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: RunIdentity --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: RunRecord --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: RegisterRunOptions --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: RunCoordinatorTimeSource --
+Upstream occurrences: none
+External layer occurrences: none
+
+=== SECTION: security ===
+Exported identifiers count: 0
+
+=== SECTION: tool-jobs ===
+Exported identifiers count: 15
+-- Identifier: TOOL_JOB_TOOL_NAMES --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ToolJobToolName --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: isToolJobToolName --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ToolJobStatus --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ToolJob --
+Upstream occurrences: none
+External layer occurrences: none
+
+=== SECTION: tool-relay ===
+Exported identifiers count: 10
+-- Identifier: ToolRelayDeclaration --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ToolRelayEntry --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: ToolCallVerdict --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: TOOL_RELAY_WRITE_DESCRIPTION_MARKER --
+Upstream occurrences: none
+External layer occurrences: none
+-- Identifier: TOOL_RELAY_WRITE_TOOLS_ENV --
+Upstream occurrences: none
+External layer occurrences: none
+
+=== SECTION: tool-timeouts ===
+Exported identifiers count: 9
+-- Identifier: CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS --
+Upstream occurrences:
+src/adapters/chatgpt-web/mcp-server.ts:44:export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
+src/adapters/chatgpt-web/mcp-server.ts:212:    ? CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS
+src/adapters/chatgpt-web/mcp-server.ts:214:  return Math.min(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, remaining);
+tests/chatgpt-web-harness.test.ts:25:import { CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, chatGptMcpInvocationTimeout } from "../src/adapters/chatgpt-web/mcp-server";
+tests/chatgpt-web-harness.test.ts:3214:      expect(chatGptMcpInvocationTimeout(environment)).toBe(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS);
+External layer occurrences:
+src/tool-timeouts.ts:29:export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
+src/tool-timeouts.ts:53:  toolResultTimeoutMs: CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS,
+tests/w10-timeouts.test.ts:9:  CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS,
+tests/w10-timeouts.test.ts:44:  expect(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS).toBe(90_000);
+-- Identifier: DEFAULT_TOOL_QUEUE_TIMEOUT_MS --
+Upstream occurrences: none
+External layer occurrences:
+src/tool-timeouts.ts:32:export const DEFAULT_TOOL_QUEUE_TIMEOUT_MS = 60_000;
+src/tool-timeouts.ts:51:  queueTimeoutMs: DEFAULT_TOOL_QUEUE_TIMEOUT_MS,
+tests/w10-timeouts.test.ts:11:  DEFAULT_TOOL_QUEUE_TIMEOUT_MS,
+tests/w10-timeouts.test.ts:42:  expect(DEFAULT_TOOL_QUEUE_TIMEOUT_MS).toBe(60_000);
+-- Identifier: DEFAULT_TOOL_GENERATION_TIMEOUT_MS --
+Upstream occurrences: none
+External layer occurrences:
+src/tool-timeouts.ts:35:export const DEFAULT_TOOL_GENERATION_TIMEOUT_MS = 300_000;
+src/tool-timeouts.ts:52:  generationTimeoutMs: DEFAULT_TOOL_GENERATION_TIMEOUT_MS,
+tests/w10-timeouts.test.ts:10:  DEFAULT_TOOL_GENERATION_TIMEOUT_MS,
+tests/w10-timeouts.test.ts:43:  expect(DEFAULT_TOOL_GENERATION_TIMEOUT_MS).toBe(300_000);
+-- Identifier: TOOL_JOB_TIMEOUT_FACTOR --
+Upstream occurrences: none
+External layer occurrences:
+src/tool-timeouts.ts:38:export const TOOL_JOB_TIMEOUT_FACTOR = 10;
+src/tool-timeouts.ts:62: * short-tool budget, so its result wait is bounded by toolResultTimeoutMs × TOOL_JOB_TIMEOUT_FACTOR
+src/tool-timeouts.ts:66:  return toolResultTimeoutMs * TOOL_JOB_TIMEOUT_FACTOR;
+-- Identifier: ToolTimeoutsConfig --
+Upstream occurrences: none
+External layer occurrences:
+src/external-layer.ts:11:import { resolveToolTimeouts, type ToolTimeoutsConfig } from "./tool-timeouts";
+src/external-layer.ts:48:  toolTimeouts?: Partial<ToolTimeoutsConfig>;
+src/tool-timeouts.ts:41:export interface ToolTimeoutsConfig {
+src/tool-timeouts.ts:50:export const DEFAULT_TOOL_TIMEOUTS: ToolTimeoutsConfig = {
+src/tool-timeouts.ts:75:  raw: Partial<Record<keyof ToolTimeoutsConfig, unknown>> | undefined,
+src/tool-timeouts.ts:77:): ToolTimeoutsConfig {
+src/tool-timeouts.ts:82:  const resolved = {} as ToolTimeoutsConfig;
