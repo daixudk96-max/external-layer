@@ -64,8 +64,8 @@ export interface TransientRetryOptions {
   limit: number;
   /** 注入式 sleep，默认真实 setTimeout；每次重试前以 2000 * attempt 毫秒调用。 */
   sleep?: (ms: number) => Promise<void>;
-  /** 每次决定重试时回调（attempt = 失败的那次尝试，message = 错误文本）。 */
-  onRetry?: (attempt: number, message: string) => void;
+  /** 每次决定重试时回调（attempt = 失败的那次尝试，message = 错误文本，error = 原始抛出错误）。 */
+  onRetry?: (attempt: number, message: string, error?: unknown) => void;
   /** 额外的可重试判定：返回 true 即视为可重试（与瞬时错误族取并集）。 */
   isRetryable?: (error: unknown) => boolean;
 }
@@ -95,7 +95,7 @@ export async function withTransientRetry<T>(
         // 非瞬时错误立即抛出；预算耗尽抛出最后一次错误（绝不伪造成功）。
         throw error;
       }
-      options.onRetry?.(attempt, message);
+      options.onRetry?.(attempt, message, error);
       await sleep(BACKOFF_BASE_MS * attempt);
     }
   }

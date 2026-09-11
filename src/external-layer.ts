@@ -7,6 +7,10 @@ import {
 } from "./chat-completions";
 import { CHATGPT_WEB_LATEST_MODEL_ID, tierSlugForEffort, unifiedCatalog, UnknownEffortError } from "./models";
 import { classifyEmptyCompletion, isTransientError, withTransientRetry } from "./reliability";
+import { resolveStallTimeoutSec, UpstreamStallError } from "./stall-timeout";
+import { resolveToolTimeouts, type ToolTimeoutsConfig } from "./tool-timeouts";
+
+export { UpstreamStallError } from "./stall-timeout";
 
 /** External layer: a standard Responses API facade in front of the original codex-chatgpt-web upstream.
  * The upstream expects Codex-native requests authenticated with a ChatGPT OAuth bearer; this layer
@@ -36,11 +40,19 @@ export interface ExternalLayerConfig {
   statePath?: string;
   /** 幂等回放 TTL 毫秒；缺省 600000；0 = 关闭回放 */
   idempotencyTtlMs?: number;
+  /** 覆盖静默预算（秒），经 resolveStallTimeoutSec 解析 */
+  stallTimeoutSec?: number;
+  /** 覆盖上游接单到首字节的预算（毫秒），缺省使用 toolTimeouts.generationTimeoutMs (300_000) */
+  firstByteTimeoutMs?: number;
+  /** 工具超时契约配置 */
+  toolTimeouts?: Partial<ToolTimeoutsConfig>;
 }
 
 export interface ExternalLayerHandle {
   baseUrl: string;
   stop: () => Promise<void>;
+  stallTimeoutSec: number;
+  firstByteTimeoutMs: number;
 }
 
 class UpstreamHttpFailure extends Error {
@@ -226,6 +238,76 @@ function tapStream(
   });
 }
 
+/** 流内静默看门狗：上游 2xx 流式转发时，若连续 stallTimeoutSec 秒没有收到任何字节，中止上游 stream 并报错。 */
+function withStreamStallWatchdog(
+  source: ReadableStream<Uint8Array>,
+  timeoutSec: number,
+): ReadableStream<Uint8Array> {
+  const timeoutMs = timeoutSec * 1000;
+  const reader = source.getReader();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  function cleanupTimer() {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  }
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for (;;) {
+          let timedOut = false;
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              timedOut = true;
+              cleanupTimer();
+              console.warn(`[external-layer] upstream stall: kind=stream_stall budget=${timeoutSec}s`);
+              reject(
+                new UpstreamStallError(
+                  "stream_stall",
+                  timeoutMs,
+                  `ChatGPT Web upstream stream stalled: no data for ${timeoutSec}s`,
+                ),
+              );
+            }, timeoutMs);
+          });
+
+          try {
+            const { done, value } = await Promise.race([reader.read(), timeoutPromise]);
+            cleanupTimer();
+            if (done) {
+              try {
+                controller.close();
+              } catch {}
+              break;
+            }
+            if (value) {
+              controller.enqueue(value);
+            }
+          } catch (readErr) {
+            cleanupTimer();
+            if (timedOut) {
+              reader.cancel(readErr).catch(() => {});
+            }
+            throw readErr;
+          }
+        }
+      } catch (error) {
+        cleanupTimer();
+        try {
+          controller.error(error);
+        } catch {}
+      }
+    },
+    async cancel(reason) {
+      cleanupTimer();
+      await reader.cancel(reason).catch(() => {});
+    },
+  });
+}
+
 /** Terminate an in-flight SSE response with an explicit error frame rather than a broken transfer. */
 function terminateOnStreamFailure(
   source: ReadableStream<Uint8Array>,
@@ -240,7 +322,9 @@ function terminateOnStreamFailure(
         for (;;) {
           const { done, value } = await reader.read();
           if (done) {
-            controller.close();
+            try {
+              controller.close();
+            } catch {}
             break;
           }
           if (value) {
@@ -250,18 +334,28 @@ function terminateOnStreamFailure(
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[external-layer] upstream stream failed mid-flight: ${message}`);
-        if (!sawTerminalMarker) controller.enqueue(frame(message));
-        controller.close();
+        if (!(error instanceof UpstreamStallError) && !message.includes("Controller is already closed")) {
+          console.warn(`[external-layer] upstream stream failed mid-flight: ${message}`);
+        }
+        try {
+          if (!sawTerminalMarker) controller.enqueue(frame(message));
+          controller.close();
+        } catch {}
       }
     },
     async cancel(reason) {
-      await reader.cancel(reason);
+      await reader.cancel(reason).catch(() => {});
     },
   });
 }
 
 export async function startExternalLayer(config: ExternalLayerConfig): Promise<ExternalLayerHandle> {
+  const resolvedToolTimeouts = resolveToolTimeouts(config.toolTimeouts, "external layer config");
+  const effectiveStallTimeoutSec = resolveStallTimeoutSec(config.stallTimeoutSec);
+  const effectiveFirstByteTimeoutMs = config.firstByteTimeoutMs !== undefined
+    ? config.firstByteTimeoutMs
+    : resolvedToolTimeouts.generationTimeoutMs;
+
   if (!process.env.NO_PROXY && (process.env.HTTP_PROXY || process.env.HTTPS_PROXY)) {
     process.env.NO_PROXY = "127.0.0.1,localhost";
   }
@@ -419,6 +513,13 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
                 );
 
+                const abortController = new AbortController();
+                let timedOut = false;
+                const timer = setTimeout(() => {
+                  timedOut = true;
+                  abortController.abort();
+                }, effectiveFirstByteTimeoutMs);
+
                 let upstream: Response;
                 try {
                   upstream = await fetch(`${upstreamBase}/v1/responses`, {
@@ -428,10 +529,20 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                       "content-type": req.headers.get("content-type") ?? "application/json",
                     },
                     body: JSON.stringify(native),
+                    signal: abortController.signal,
                   });
                 } catch (error) {
+                  if (timedOut || abortController.signal.aborted) {
+                    throw new UpstreamStallError(
+                      "first_byte",
+                      effectiveFirstByteTimeoutMs,
+                      `ChatGPT Web upstream stalled waiting for first byte (budget: ${effectiveFirstByteTimeoutMs}ms)`,
+                    );
+                  }
                   const detail = error instanceof Error ? error.message : "upstream unreachable";
                   throw new UpstreamNetworkError(detail);
+                } finally {
+                  clearTimeout(timer);
                 }
 
                 const contentType = upstream.headers.get("content-type") ?? "application/json";
@@ -454,6 +565,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 limit: retryLimit,
                 sleep: retrySleep,
                 isRetryable: (error: unknown) => {
+                  if (error instanceof UpstreamStallError && error.kind === "first_byte") {
+                    return true;
+                  }
                   if (error instanceof UpstreamHttpFailure) {
                     return error.status >= 500 || isTransientError(error.body);
                   }
@@ -465,7 +579,13 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   }
                   return false;
                 },
-                onRetry: (attempt: number, message: string) => {
+                onRetry: (attempt: number, message: string, error?: unknown) => {
+                  if (error instanceof UpstreamStallError) {
+                    console.warn(
+                      `[external-layer] upstream stall: kind=${error.kind} budget=${error.budgetMs}ms attempt=${attempt}/${retryLimit}`,
+                    );
+                    return;
+                  }
                   const family = isTransientError(message)
                     ? "transient_error"
                     : message.includes("empty turn content")
@@ -476,7 +596,21 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               },
             );
           } catch (error) {
-            if (error instanceof UpstreamHttpFailure) {
+            if (error instanceof UpstreamStallError) {
+              lastError = `upstream stall timeout (${error.kind})`;
+              turnResult = {
+                status: 504,
+                bodyText: JSON.stringify({
+                  error: {
+                    message: `ChatGPT Web upstream stalled: ${error.message}`,
+                    type: "server_error",
+                    code: "upstream_stall_timeout",
+                  },
+                  code: "upstream_stall_timeout",
+                }),
+                contentType: "application/json",
+              };
+            } else if (error instanceof UpstreamHttpFailure) {
               lastError = `upstream ${error.status}`;
               turnResult = { status: error.status, bodyText: error.body, contentType: error.contentType };
             } else if (error instanceof UpstreamNetworkError) {
@@ -513,7 +647,8 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           // same key later (and a Responses replay of a chat-opened turn must be
           // byte-identical), so the idempotency record is written from one tap that
           // sits upstream of the client-specific transform.
-          const recordedStream = tapStream(turnResult.bodyStream, (fullText) => {
+          const watchdogStream = withStreamStallWatchdog(turnResult.bodyStream, effectiveStallTimeoutSec);
+          const recordedStream = tapStream(watchdogStream, (fullText) => {
             idempotencyStore.save(idempotencyKey, {
               status: 200,
               body: fullText,
@@ -551,6 +686,13 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
                 );
 
+                const abortController = new AbortController();
+                let timedOut = false;
+                const timer = setTimeout(() => {
+                  timedOut = true;
+                  abortController.abort();
+                }, effectiveFirstByteTimeoutMs);
+
                 let upstream: Response;
                 try {
                   upstream = await fetch(`${upstreamBase}/v1/responses`, {
@@ -560,10 +702,20 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                       "content-type": req.headers.get("content-type") ?? "application/json",
                     },
                     body: JSON.stringify(native),
+                    signal: abortController.signal,
                   });
                 } catch (error) {
+                  if (timedOut || abortController.signal.aborted) {
+                    throw new UpstreamStallError(
+                      "first_byte",
+                      effectiveFirstByteTimeoutMs,
+                      `ChatGPT Web upstream stalled waiting for first byte (budget: ${effectiveFirstByteTimeoutMs}ms)`,
+                    );
+                  }
                   const detail = error instanceof Error ? error.message : "upstream unreachable";
                   throw new UpstreamNetworkError(detail);
+                } finally {
+                  clearTimeout(timer);
                 }
 
                 const body = await upstream.text();
@@ -601,6 +753,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 limit: retryLimit,
                 sleep: retrySleep,
                 isRetryable: (error: unknown) => {
+                  if (error instanceof UpstreamStallError && error.kind === "first_byte") {
+                    return true;
+                  }
                   if (error instanceof UpstreamHttpFailure) {
                     return error.status >= 500 || isTransientError(error.body);
                   }
@@ -612,7 +767,13 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   }
                   return false;
                 },
-                onRetry: (attempt: number, message: string) => {
+                onRetry: (attempt: number, message: string, error?: unknown) => {
+                  if (error instanceof UpstreamStallError) {
+                    console.warn(
+                      `[external-layer] upstream stall: kind=${error.kind} budget=${error.budgetMs}ms attempt=${attempt}/${retryLimit}`,
+                    );
+                    return;
+                  }
                   const family = isTransientError(message)
                     ? "transient_error"
                     : message.includes("empty turn content")
@@ -624,6 +785,21 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             );
             return response;
           } catch (error) {
+            if (error instanceof UpstreamStallError) {
+              lastError = `upstream stall timeout (${error.kind})`;
+              return {
+                status: 504,
+                body: JSON.stringify({
+                  error: {
+                    message: `ChatGPT Web upstream stalled: ${error.message}`,
+                    type: "server_error",
+                    code: "upstream_stall_timeout",
+                  },
+                  code: "upstream_stall_timeout",
+                }),
+                contentType: "application/json",
+              };
+            }
             if (error instanceof UpstreamHttpFailure) {
               lastError = `upstream ${error.status}`;
               return { status: error.status, body: error.body, contentType: error.contentType };
@@ -722,5 +898,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
     stop: async () => {
       server.stop(true);
     },
+    stallTimeoutSec: effectiveStallTimeoutSec,
+    firstByteTimeoutMs: effectiveFirstByteTimeoutMs,
   };
 }
