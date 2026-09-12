@@ -2,7 +2,7 @@
  * W24 canonical contract — failure breaker: stop the big-conversation death spiral with an
  * immediate, actionable error instead of minutes of silent churn.
  *
- * Evidence (2026-09-12, live `C:\Users\daixu\AppData\Local\Temp\upstream-serve.log`):
+ * Evidence (2026-09-12, live `C:\Users\<you>\AppData\Local\Temp\upstream-serve.log`):
  *  - 6 turns aborted today, each preceded by a `20-response-stalled-60s` checkpoint (1:1): the page
  *    generates halfway, then the ~630KB DOM (full 40k-token history pasted into a FRESH temporary
  *    conversation) stalls the browser observation pipeline, and after 60s with zero progress the

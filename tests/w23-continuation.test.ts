@@ -12,7 +12,7 @@
  *    `temporary_chat_preparation` and pastes only `messages.slice(lastAssistant + 1)`
  *    (`conversation-key.ts:45-55`, `browser-worker.ts:4289`, `browser-worker.ts:4506-4508`).
  *  - Live proof: two requests with a stable thread_id produced `browser.tab_reused` in the launcher
- *    log (`C:\Users\daixu\.codex-chatgpt-web-dev\launcher\logs\launcher.jsonl`) and the reused
+ *    log (`C:\Users\<you>\.codex-chatgpt-web-dev\launcher\logs\launcher.jsonl`) and the reused
  *    turn's checkpoints had NO `02-temporary-chat-navigation-complete.json`
  *    (1-browser-page-acquired -> 2-effort-control-ready -> ... -> 12-turn-completed).
  *  - Our facade mints a FRESH thread_id every turn (`src/external-layer.ts:236-237`,
