@@ -115,7 +115,7 @@ The **context window is not a per-tier ladder on Pro accounts** — it is decide
 ## Operational behavior
 
 - **One upstream attempt per client request by default.** Retry multiplication (our retries × your client's retries) is what turns a transient browser hiccup into half an hour of spinning. Set `transientRetryLimit` only if your client does not retry.
-- **Progress, not bytes.** Upstream emits a heartbeat every second while the model thinks, so "no bytes" is useless as a liveness signal. The watchdog counts only frames that carry real work (text deltas, tool calls, terminal events) and aborts with `504 upstream_no_progress` after `EXT_LAYER_PROGRESS_MS` (default 420 s) — then it cancels the abandoned browser turn before your retry opens a new one.
+- **Progress, not bytes.** Upstream emits a heartbeat every second while the model thinks, so "no bytes" is useless as a liveness signal. The watchdog counts only frames that carry real work (text deltas, tool calls, terminal events) and aborts with `504 upstream_no_progress` after `EXT_LAYER_PROGRESS_MS` (default 240 s) — then it cancels the abandoned browser turn before your retry opens a new one.
 - **Idempotent replay.** A repeated identical body returns the stored response byte-for-byte with `x-ext-layer-replay: true` in milliseconds. Only 2xx responses are stored; a failed turn is never replayed as if it had succeeded.
 - **Client aborts propagate.** If your client disconnects, the browser turn is interrupted instead of running on.
 

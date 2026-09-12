@@ -22,7 +22,7 @@ export function resolveStallTimeoutSec(configuredSec: number | undefined): numbe
   return DEFAULT_STALL_TIMEOUT_SEC;
 }
 
-export const DEFAULT_PROGRESS_TIMEOUT_MS = 420_000;
+export const DEFAULT_PROGRESS_TIMEOUT_MS = 240_000;
 export const MAX_PROGRESS_TIMEOUT_MS = 3_600_000;
 
 /**

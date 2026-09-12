@@ -65,7 +65,7 @@ export interface ExternalLayerConfig {
   stallTimeoutSec?: number;
   /** 覆盖上游接单到首字节的预算（毫秒），缺省使用 toolTimeouts.generationTimeoutMs (300_000) */
   firstByteTimeoutMs?: number;
-  /** progress deadline for a turn that produces no content-bearing frame; default 420000 ms */
+  /** progress deadline for a turn that produces no content-bearing frame; default 240000 ms */
   progressTimeoutMs?: number;
   /** 工具超时契约配置 */
   toolTimeouts?: Partial<ToolTimeoutsConfig>;

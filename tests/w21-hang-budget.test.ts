@@ -11,10 +11,10 @@
  *    could open up to 5 x 6 = 30 browser turns on the same page — the "runs for a whole day" bug.
  *    Decision (user, 2026-09-12): keep the client's retries, DROP the facade's — one turn per
  *    request, so the two layers can never multiply.
- *  - the user-facing bound is 7-8 minutes of "no real content", not "no bytes at all".
+ *  - the user-facing bound is 4 minutes of "no real content", not "no bytes at all".
  *
  * Frozen contract:
- *  - `progressTimeoutMs` (env EXT_LAYER_PROGRESS_MS), default 420_000 ms, clamp finite>0, max
+ *  - `progressTimeoutMs` (env EXT_LAYER_PROGRESS_MS), default 240_000 ms, clamp finite>0, max
  *    3_600_000; it is the deadline for a turn that produces NO content-bearing frame.
  *  - progress = a frame that carries real work (`output_text.delta`, `function_call`,
  *    `reasoning*_text.delta`, `response.completed|incomplete|failed`, `[DONE]`).

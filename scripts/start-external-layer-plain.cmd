@@ -7,7 +7,7 @@ set "PORT=17843"
 if not "%EXT_LAYER_PORT%"=="" set "PORT=%EXT_LAYER_PORT%"
 set "ROOT=%~dp0.."
 set "EXT_LAYER_PORT=%PORT%"
-if "%EXT_LAYER_PROGRESS_MS%"=="" set "EXT_LAYER_PROGRESS_MS=420000"
+if "%EXT_LAYER_PROGRESS_MS%"=="" set "EXT_LAYER_PROGRESS_MS=240000"
 echo [ext-layer] starting production shape on %PORT% from %ROOT%
 cd /d "%ROOT%"
 bun run src/index.ts
