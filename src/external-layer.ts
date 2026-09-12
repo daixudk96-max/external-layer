@@ -1,6 +1,13 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { ConversationRegistry } from "./conversation-registry";
-import { createFailureBreaker, estimatePayloadSize, type FailureBreakerConfig } from "./failure-breaker";
+import {
+  createFailureBreaker,
+  DEFAULT_PAYLOAD_CHARS_THRESHOLD,
+  DEFAULT_PAYLOAD_TOKEN_THRESHOLD,
+  estimatePayloadSize,
+  estimateTokensFromChars,
+  type FailureBreakerConfig,
+} from "./failure-breaker";
 import { deriveIdempotencyKey, IdempotencyStore } from "./idempotency";
 import {
   chatCompletionsToResponses,
@@ -41,6 +48,7 @@ import {
   resolveAccountCapabilities,
   resolveUpstreamHome,
 } from "./upstream-home";
+import { forwardPassthroughRequest, isPassthroughRoute } from "./passthrough";
 
 
 export { UpstreamStallError } from "./stall-timeout";
@@ -741,6 +749,21 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
     idleTimeout: 240,
     async fetch(req) {
       const url = new URL(req.url);
+      if (isPassthroughRoute(req.method, url.pathname)) {
+        return forwardPassthroughRequest({
+          req,
+          url,
+          apiKey: config.apiKey,
+          upstreamBaseUrl: config.upstreamBaseUrl,
+          tokenProvider: config.tokenProvider,
+          onUpstreamError: (detail) => {
+            lastError = detail;
+          },
+          bearerMatches,
+          unauthorized,
+        });
+      }
+
       const isResponses = req.method === "POST" && url.pathname === "/v1/responses";
       const isChatCompletions = req.method === "POST" && url.pathname === "/v1/chat/completions";
 
@@ -809,6 +832,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           typeof standard.instructions === "string" ? standard.instructions : undefined,
         );
         const payloadChars = payloadSize.chars;
+        const rawTokens = estimateTokensFromChars(payloadChars, payloadSize.cjkChars);
+        const payloadTokens = payloadChars > 0 ? Math.max(1, Math.min(payloadChars, rawTokens)) : 0;
+        const payloadSignalHeaders = {
+          "x-ext-layer-payload-chars": String(payloadChars),
+          "x-ext-layer-payload-tokens": String(payloadTokens),
+        };
         const breakerVerdict = failureBreaker.check(resolvedThreadId, payloadChars, payloadSize.cjkChars);
         if (breakerVerdict.blocked) {
           console.warn(
@@ -827,6 +856,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               headers: {
                 "content-type": "application/json",
                 "x-ext-layer-conversation": resolvedThreadId,
+                ...payloadSignalHeaders,
               },
             },
           );
@@ -869,6 +899,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           const nudgeHeaders: Record<string, string> = {
             "x-ext-layer-conversation": resolvedThreadId,
             "x-ext-layer-nudge": "conversation_too_large",
+            ...payloadSignalHeaders,
           };
           if (isStreaming) {
             const frame = (event: string, payload: unknown) => `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -957,6 +988,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   "content-type": cached.contentType,
                   "x-ext-layer-replay": "true",
                   "x-ext-layer-conversation": resolvedThreadId,
+                  ...payloadSignalHeaders,
                 },
               });
             } else {
@@ -1483,6 +1515,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 "content-type": turnResult.contentType,
                 ...(contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
                 "x-ext-layer-conversation": resolvedThreadId,
+                ...payloadSignalHeaders,
               },
             });
           } else {
@@ -1522,6 +1555,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 "content-type": "text/event-stream",
                 ...(contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
                 "x-ext-layer-conversation": resolvedThreadId,
+                ...payloadSignalHeaders,
               },
             });
           }
@@ -1801,6 +1835,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             headers: {
               ...(contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
               "x-ext-layer-conversation": resolvedThreadId,
+              ...payloadSignalHeaders,
             },
           });
         }
@@ -1811,6 +1846,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             "content-type": result.contentType,
             ...(result.status === 200 && contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
             "x-ext-layer-conversation": resolvedThreadId,
+            ...(result.status === 200 ? payloadSignalHeaders : {}),
           },
         });
       }
@@ -1854,6 +1890,8 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           latest_effort: derived.latestEffort,
           bigger_context: biggerContext,
           latest_context_window: latestContextWindow,
+          payload_cliff_tokens: DEFAULT_PAYLOAD_TOKEN_THRESHOLD,
+          payload_cliff_chars: DEFAULT_PAYLOAD_CHARS_THRESHOLD,
           source: derived.source,
           tiers: derived.tiers,
           account: {
