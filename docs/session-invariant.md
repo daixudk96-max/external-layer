@@ -1,5 +1,7 @@
 # 同会话不变量技术规范 (Session Invariant Specification)
 
+> **2026-09-13 修订：HTTP round 不等于 native turn。** 普通新用户任务仍使用新 `turn_id`；但 `end_turn:false` 的工具暂停及其结果回传必须沿用原来的 `turn_id`，否则上游会等待旧执行结束而无法交回工具结果。DSH 的稳定 `prompt_cache_key` 优先认领会话。下文原来的“每个步骤都生成新 turn_id”只适用于新的用户任务，不适用于同一任务内的工具往返。详见 [独立排查报告](tab-reuse-root-cause-2026-09-13.md)。
+
 ## 1. 核心不变量：一个客户端会话 = 一个浏览器会话 (One Client Conversation = One Browser Session)
 
 ChatGPT Web 外接层（external layer）向标准客户端暴露符合 OpenAI 标准的 `/v1/responses` 与 `/v1/chat/completions` 端点。在这一架构下，理解底层会话生命周期的第一性原理至关重要：

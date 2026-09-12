@@ -59,7 +59,7 @@ function tierEchoUpstream() {
 
 test("the flat reasoning_effort field selects the tier, and nested reasoning.effort wins over it", async () => {
   const upstream = tierEchoUpstream();
-  const layer = await startExternalLayer({ apiKey: "sk-test-key", upstreamBaseUrl: upstream.url, tokenProvider: async () => "tok", port: 0 });
+  const layer = await startExternalLayer({ apiKey: "sk-test-key", upstreamBaseUrl: upstream.url, tokenProvider: async () => "tok", port: 0, solAvailable: true, proAvailable: true });
   const post = (body: Record<string, unknown>) => fetch(`${layer.baseUrl}/v1/responses`, {
     method: "POST",
     headers: { authorization: "Bearer sk-test-key", "content-type": "application/json" },
@@ -91,7 +91,7 @@ test("the flat reasoning_effort field selects the tier, and nested reasoning.eff
 
 test("an unknown effort is rejected with 400 before any upstream turn is opened", async () => {
   const upstream = tierEchoUpstream();
-  const layer = await startExternalLayer({ apiKey: "sk-test-key", upstreamBaseUrl: upstream.url, tokenProvider: async () => "tok", port: 0 });
+  const layer = await startExternalLayer({ apiKey: "sk-test-key", upstreamBaseUrl: upstream.url, tokenProvider: async () => "tok", port: 0, solAvailable: true, proAvailable: true });
   try {
     const res = await fetch(`${layer.baseUrl}/v1/responses`, {
       method: "POST",
