@@ -1,6 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { ConversationRegistry } from "./conversation-registry";
-import { createFailureBreaker, estimatePayloadChars, type FailureBreakerConfig } from "./failure-breaker";
+import { createFailureBreaker, estimatePayloadSize, type FailureBreakerConfig } from "./failure-breaker";
 import { deriveIdempotencyKey, IdempotencyStore } from "./idempotency";
 import {
   chatCompletionsToResponses,
@@ -804,11 +804,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             ).threadId
           : `prov-${randomUUID()}`;
 
-        const payloadChars = estimatePayloadChars(
+        const payloadSize = estimatePayloadSize(
           normalizedInputItems,
           typeof standard.instructions === "string" ? standard.instructions : undefined,
         );
-        const breakerVerdict = failureBreaker.check(resolvedThreadId, payloadChars);
+        const payloadChars = payloadSize.chars;
+        const breakerVerdict = failureBreaker.check(resolvedThreadId, payloadChars, payloadSize.cjkChars);
         if (breakerVerdict.blocked) {
           console.warn(
             `[external-layer] req=${reqId} refused code=conversation_too_large failures=${breakerVerdict.failures} payloadChars=${payloadChars}`,
@@ -836,7 +837,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
         // 429 never lets it do. No upstream turn is opened, nothing is recorded as a breaker
         // success/failure, and nothing enters the idempotency store. Responses surface only:
         // a chat/completions client keeps the W24 429 refusal (different response shape).
-        const nudgeVerdict = failureBreaker.shouldNudge(resolvedThreadId, payloadChars);
+        const nudgeVerdict = failureBreaker.shouldNudge(resolvedThreadId, payloadChars, payloadSize.cjkChars);
         if (nudgeVerdict.nudge && !isChatCompletions) {
           console.warn(
             `[external-layer] req=${reqId} nudge code=conversation_too_large failures=${nudgeVerdict.failures} payloadChars=${payloadChars}`,

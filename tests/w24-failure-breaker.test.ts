@@ -40,6 +40,7 @@
  */
 import { expect, test } from "bun:test";
 import { startExternalLayer } from "../src/external-layer";
+import { estimatePayloadSize, estimateTokensFromChars } from "../src/failure-breaker";
 
 const KEY = "sk-test-key";
 // 2026-09-12: raised past the new default payloadCharsThreshold (150_000) so the
@@ -393,3 +394,23 @@ test("A10 client aborts (user pressed stop) never count toward the breaker", asy
     up.stop();
   }
 }, 20000);
+// AMENDED 2026-09-12 (content-aware token estimate): the flat chars/2.5 heuristic
+// overestimated ASCII-heavy payloads by ~34% (real machine: 186,062 chars <-> 55,371 tokens,
+// while the user's DSH compaction counter disagreed loudly). ASCII and CJK now use separate
+// ratios (live calibration points: ascii ~3.6 chars/token, cjk ~1.5).
+test("A11 the token estimate is content-aware, not a flat ratio", () => {
+  // Pure-ASCII payload at the live-calibrated ratio (186_062 chars <-> ~51.7k tokens).
+  expect(estimateTokensFromChars(180_000, 0)).toBe(50_000);
+  // Pure-CJK payload (30_000 cjk chars -> 20_000 tokens).
+  expect(estimateTokensFromChars(30_000, 30_000)).toBe(20_000);
+  // Mixed payload.
+  expect(estimateTokensFromChars(52_000, 15_000)).toBe(20_278); // 37_000/3.6 + 15_000/1.5
+});
+
+test("A12 payload size counts the CJK share alongside the serialized char size", () => {
+  const item = { role: "user", type: "message", content: [{ type: "input_text", text: "hello 世界，compression" }] };
+  const size = estimatePayloadSize([item]);
+  expect(size.cjkChars).toBeGreaterThan(0);
+  expect(size.chars).toBe(JSON.stringify(item).length);
+  expect(estimatePayloadSize([], "纯中文指令")).toEqual({ chars: 5, cjkChars: 5 });
+});

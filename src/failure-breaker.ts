@@ -29,8 +29,16 @@ export interface FailureBreakerConfig {
 export const DEFAULT_FAILURE_THRESHOLD = 3;
 export const DEFAULT_PAYLOAD_CHARS_THRESHOLD = 150_000;
 export const DEFAULT_COOLDOWN_MS = 300_000;
-/** chars -> tokens, calibrated on live data (102,808 chars <-> 39,866 tokens ≈ 2.58 chars/token) */
-const CHARS_PER_TOKEN = 2.5;
+/**
+ * chars -> tokens, content-aware (2026-09-12: the flat 2.5 ratio overestimated ASCII-heavy
+ * payloads by ~34% — real machine: 186,062 chars <-> 55,371 tokens = 3.36 chars/token for a
+ * mostly-English/code payload, while the Chinese-mixed point 52,434 <-> 20,536 = 2.55 fits
+ * ascii/3.6 + cjk/1.5 with a ~29% CJK share). Heuristic, not a tokenizer.
+ */
+const ASCII_CHARS_PER_TOKEN = 3.6;
+const CJK_CHARS_PER_TOKEN = 1.5;
+/** Han + kana + Hangul + fullwidth forms: the chars real tokenizers spend ~1 token on. */
+const CJK_CHAR_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef]/g;
 const MAX_TRACKED_CONVERSATIONS = 512;
 
 export interface BreakerVerdict {
@@ -40,29 +48,50 @@ export interface BreakerVerdict {
 }
 
 export interface FailureBreaker {
-  check(threadId: string, payloadChars: number): BreakerVerdict;
-  recordFailure(threadId: string, payloadChars: number): void;
+  check(threadId: string, payloadChars: number, cjkChars?: number): BreakerVerdict;
+  recordFailure(threadId: string, payloadChars: number, cjkChars?: number): void;
   /**
    * W27: one qualifying big-payload failure is already enough evidence that this conversation
    * cannot pass the page as-is, so the NEXT oversized request should be nudged (a synthetic
    * completed response telling the agent to compact / start a new conversation) instead of
    * burning another doomed upstream turn. Never true below the payload threshold.
    */
-  shouldNudge(threadId: string, payloadChars: number): { nudge: boolean; failures: number; estimatedTokens: number };
+  shouldNudge(
+    threadId: string,
+    payloadChars: number,
+    cjkChars?: number,
+  ): { nudge: boolean; failures: number; estimatedTokens: number };
   recordSuccess(threadId: string): void;
 }
 
-/** Deterministic payload size: serialized input items plus top-level instructions. */
-export function estimatePayloadChars(items: unknown[], instructions?: string): number {
-  let total = typeof instructions === "string" ? instructions.length : 0;
+/** Deterministic payload size: serialized input items plus top-level instructions, with the
+ *  CJK share counted separately so the token estimate can be content-aware. */
+export function estimatePayloadSize(
+  items: unknown[],
+  instructions?: string,
+): { chars: number; cjkChars: number } {
+  let chars = typeof instructions === "string" ? instructions.length : 0;
+  let cjkChars = typeof instructions === "string" ? countCjk(instructions) : 0;
   for (const item of items) {
-    total += JSON.stringify(item).length;
+    const serialized = JSON.stringify(item);
+    chars += serialized.length;
+    cjkChars += countCjk(serialized);
   }
-  return total;
+  return { chars, cjkChars };
 }
 
-export function estimateTokensFromChars(payloadChars: number): number {
-  return Math.round(payloadChars / CHARS_PER_TOKEN);
+function countCjk(text: string): number {
+  return text.match(CJK_CHAR_RE)?.length ?? 0;
+}
+
+/** Back-compat wrapper: the deterministic char size only. */
+export function estimatePayloadChars(items: unknown[], instructions?: string): number {
+  return estimatePayloadSize(items, instructions).chars;
+}
+
+export function estimateTokensFromChars(payloadChars: number, cjkChars = 0): number {
+  const asciiChars = Math.max(0, payloadChars - cjkChars);
+  return Math.round(asciiChars / ASCII_CHARS_PER_TOKEN + cjkChars / CJK_CHARS_PER_TOKEN);
 }
 
 interface ConversationState {
@@ -99,21 +128,21 @@ export function createFailureBreaker(rawConfig: FailureBreakerConfig = {}): Fail
   }
 
   return {
-    check(threadId, payloadChars) {
+    check(threadId, payloadChars, cjkChars = 0) {
       const state = stateOf(threadId);
       const blocked = state.openedAt !== null && now() - state.openedAt < cooldownMs;
       return {
         blocked,
         failures: state.failures,
-        estimatedTokens: estimateTokensFromChars(payloadChars),
+        estimatedTokens: estimateTokensFromChars(payloadChars, cjkChars),
       };
     },
-    shouldNudge(threadId, payloadChars) {
+    shouldNudge(threadId, payloadChars, cjkChars = 0) {
       const state = stateOf(threadId);
       return {
         nudge: state.failures >= 1 && payloadChars >= payloadCharsThreshold,
         failures: state.failures,
-        estimatedTokens: estimateTokensFromChars(payloadChars),
+        estimatedTokens: estimateTokensFromChars(payloadChars, cjkChars),
       };
     },
     recordFailure(threadId, payloadChars) {
