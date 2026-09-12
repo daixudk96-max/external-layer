@@ -14,7 +14,7 @@ import { startExternalLayer } from "./external-layer";
  */
 
 const port = Number(process.env.EXT_LAYER_PORT ?? 17843);
-const upstreamBaseUrl = process.env.EXT_LAYER_UPSTREAM ?? "http://127.0.0.1:17842";
+const upstreamBaseUrl = (process.env.EXT_LAYER_UPSTREAM ?? "http://127.0.0.1:17842").trim();
 const authJsonPath = process.env.EXT_LAYER_AUTH_JSON ?? join(homedir(), ".codex", "auth.json");
 const statePath = process.env.EXT_LAYER_STATE;
 const stallTimeoutSec = process.env.EXT_LAYER_STALL_SEC !== undefined
@@ -53,7 +53,20 @@ const conversationLimit = process.env.EXT_LAYER_CONVERSATION_LIMIT !== undefined
   : undefined;
 const conversationsPath = process.env.EXT_LAYER_CONVERSATIONS;
 
-const upstreamHome = process.env.EXT_LAYER_UPSTREAM_HOME;
+const failureBreakerEnabled = parseBooleanEnv(process.env.EXT_LAYER_BREAKER);
+const failureBreakerThreshold = process.env.EXT_LAYER_BREAKER_THRESHOLD !== undefined
+  ? Number(process.env.EXT_LAYER_BREAKER_THRESHOLD)
+  : undefined;
+const failureBreakerChars = process.env.EXT_LAYER_BREAKER_CHARS !== undefined
+  ? Number(process.env.EXT_LAYER_BREAKER_CHARS)
+  : undefined;
+const failureBreakerCooldownMs = process.env.EXT_LAYER_BREAKER_COOLDOWN_MS !== undefined
+  ? Number(process.env.EXT_LAYER_BREAKER_COOLDOWN_MS)
+  : undefined;
+const failureBreakerConfigured = failureBreakerEnabled !== undefined || failureBreakerThreshold !== undefined
+  || failureBreakerChars !== undefined || failureBreakerCooldownMs !== undefined;
+
+const upstreamHome = process.env.EXT_LAYER_UPSTREAM_HOME?.trim() || undefined;
 
 // No shared default key ships with this repo: an unset EXT_LAYER_API_KEY generates a
 // per-install key instead of accepting a well-known one. Loopback-only, but a fixed
@@ -79,6 +92,16 @@ const layer = await startExternalLayer({
   ...(continuation !== undefined ? { continuation } : {}),
   ...(conversationLimit !== undefined ? { conversationLimit } : {}),
   ...(conversationsPath ? { conversationsPath } : {}),
+  ...(failureBreakerConfigured
+    ? {
+        failureBreaker: {
+          ...(failureBreakerEnabled !== undefined ? { enabled: failureBreakerEnabled } : {}),
+          ...(failureBreakerThreshold !== undefined ? { failureThreshold: failureBreakerThreshold } : {}),
+          ...(failureBreakerChars !== undefined ? { payloadCharsThreshold: failureBreakerChars } : {}),
+          ...(failureBreakerCooldownMs !== undefined ? { cooldownMs: failureBreakerCooldownMs } : {}),
+        },
+      }
+    : {}),
 });
 
 console.log(

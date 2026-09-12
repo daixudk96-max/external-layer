@@ -96,7 +96,7 @@ curl -s http://127.0.0.1:17843/v1/responses \
 
 Error codes you will see (all `4xx`/`5xx` with a JSON `error.code`):
 
-`invalid_api_key` · `invalid_reasoning_effort` · `tier_unavailable` · `conflicting_tier` · `empty_turn_content` · `upstream_unreachable` · `upstream_stall_timeout` · `upstream_no_progress` · `tool_round_limit`
+`invalid_api_key` · `invalid_reasoning_effort` · `tier_unavailable` · `conflicting_tier` · `empty_turn_content` · `upstream_unreachable` · `upstream_stall_timeout` · `upstream_no_progress` · `tool_round_limit` · `conversation_too_large`
 
 ## Model and effort contract
 
@@ -116,6 +116,7 @@ The **context window is not a per-tier ladder on Pro accounts** — it is decide
 
 - **One upstream attempt per client request by default.** Retry multiplication (our retries × your client's retries) is what turns a transient browser hiccup into half an hour of spinning. Set `transientRetryLimit` only if your client does not retry.
 - **Progress, not bytes.** Upstream emits a heartbeat every second while the model thinks, so "no bytes" is useless as a liveness signal. The watchdog counts only frames that carry real work (text deltas, tool calls, terminal events) and aborts with `504 upstream_no_progress` after `EXT_LAYER_PROGRESS_MS` (default 240 s) — then it cancels the abandoned browser turn before your retry opens a new one.
+- **Break the death spiral.** A fresh ChatGPT conversation pasted with a huge history stalls its own page DOM and fails nearly every time (live data: <20k-token turns completed ~82%, ≥20k-token turns ~2%), and every failure releases the retained tab so the next step re-pastes everything. After 3 consecutive big-payload failures in one conversation the layer refuses further turns with `429 conversation_too_large` and tells you to start a new conversation or compact (default on; tune with `EXT_LAYER_BREAKER_THRESHOLD` / `EXT_LAYER_BREAKER_CHARS` / `EXT_LAYER_BREAKER_COOLDOWN_MS`, disable with `EXT_LAYER_BREAKER=0`).
 - **Idempotent replay is opt-in.** Only an explicit `Idempotency-Key` header (or the `/v1/chat/completions` surface) replays a stored response byte-for-byte with `x-ext-layer-replay: true`. A repeated body on `/v1/responses` runs again on purpose: the unmodified upstream has no such cache, a failed turn is never stored, and silently returning an older turn's text is worse than doing the work. Stored responses are 2xx only.
 - **Conversation continuation.** The facade keeps one upstream `thread_id` per client conversation (matched by history prefix, or by `previous_response_id` when the client sends one) and rotates only `turn_id`. The upstream then reuses its retained ChatGPT tab and pastes just the suffix of the transcript instead of retyping the whole history on every step — that is what keeps a long agent run from degrading into 10-minute steps. Every reply carries `x-ext-layer-conversation`. Tune with `EXT_LAYER_CONVERSATION_LIMIT` / `EXT_LAYER_CONVERSATIONS`; `EXT_LAYER_CONTINUATION=0` restores one fresh conversation per step.
 - **Client aborts propagate.** If your client disconnects, the browser turn is interrupted instead of running on.

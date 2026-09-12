@@ -1,5 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { ConversationRegistry } from "./conversation-registry";
+import { createFailureBreaker, estimatePayloadChars, type FailureBreakerConfig } from "./failure-breaker";
 import { deriveIdempotencyKey, IdempotencyStore } from "./idempotency";
 import {
   chatCompletionsToResponses,
@@ -78,6 +79,8 @@ export interface ExternalLayerConfig {
   conversationLimit?: number;
   /** 对话注册表持久化路径 */
   conversationsPath?: string;
+  /** 失败熔断（W24）：同一会话连续大载荷失败后立即 429 拒绝，给出「新开会话/压缩」的行动指引 */
+  failureBreaker?: FailureBreakerConfig;
 }
 
 export interface ExternalLayerHandle {
@@ -708,6 +711,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
     limit: config.conversationLimit ?? 64,
     statePath: config.conversationsPath,
   });
+  const failureBreaker = createFailureBreaker(config.failureBreaker);
 
   const server = Bun.serve({
     port: config.port ?? 0,
@@ -778,6 +782,42 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               previousResponseId,
             ).threadId
           : `prov-${randomUUID()}`;
+
+        const payloadChars = estimatePayloadChars(
+          normalizedInputItems,
+          typeof standard.instructions === "string" ? standard.instructions : undefined,
+        );
+        const breakerVerdict = failureBreaker.check(resolvedThreadId, payloadChars);
+        if (breakerVerdict.blocked) {
+          console.warn(
+            `[external-layer] req=${reqId} refused code=conversation_too_large failures=${breakerVerdict.failures} payloadChars=${payloadChars}`,
+          );
+          return new Response(
+            JSON.stringify({
+              error: {
+                type: "rate_limit_error",
+                code: "conversation_too_large",
+                message: `ChatGPT Web conversation is too large (~${breakerVerdict.estimatedTokens} tokens estimated from ${payloadChars} chars). Fresh temporary conversations at this size stall the page DOM and fail nearly every time. Start a new conversation, or compact this one before retrying.`,
+              },
+            }),
+            {
+              status: 429,
+              headers: {
+                "content-type": "application/json",
+                "x-ext-layer-conversation": resolvedThreadId,
+              },
+            },
+          );
+        }
+        // A failed turn still belongs to its conversation: binding it lets an identical client
+        // retry resolve to the SAME thread, so the breaker's counter accumulates across retries
+        // (and a successful retry re-enters normal continuation).
+        const noteTurnFailure = () => {
+          failureBreaker.recordFailure(resolvedThreadId, payloadChars);
+          if (continuationEnabled && Array.isArray(standard.input)) {
+            conversationRegistry.recordTurn(resolvedThreadId, normalizedInputItems);
+          }
+        };
 
         // Replay is opt-in: an explicit Idempotency-Key, the chat-completions surface, or a
         // non-array (completion-style) body. A repeated /v1/responses body carrying a history
@@ -1179,6 +1219,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               errCode = `upstream_${turnResult.status}`;
             }
             logFailed(errCode);
+            noteTurnFailure();
             return new Response(turnResult.bodyText, {
               status: turnResult.status,
               headers: {
@@ -1211,12 +1252,14 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             }
             lastError = undefined;
             logDone(200);
+            failureBreaker.recordSuccess(resolvedThreadId);
           });
 
           const onStreamError = (error: unknown) => {
             if (error instanceof UpstreamStallError) {
               const errCode = error.kind === "no_progress" ? "upstream_no_progress" : "upstream_stall_timeout";
               logFailed(errCode);
+              noteTurnFailure();
               // Abandoning a stalled turn is not enough: the browser turn keeps running (and
               // keeps occupying the single launcher page) unless we cancel it. A retry or the
               // client's own next request would then race a zombie turn for the page, which is
@@ -1229,6 +1272,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               // turn running under a client that is about to retry.
               void triggerInterrupt();
               logFailed("upstream_stream_error");
+              noteTurnFailure();
             }
           };
 
@@ -1543,6 +1587,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           }
           lastError = undefined;
           logDone(200);
+          failureBreaker.recordSuccess(resolvedThreadId);
         } else {
           let errCode = "upstream_error";
           try {
@@ -1552,6 +1597,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             errCode = `upstream_${result.status}`;
           }
           logFailed(errCode);
+          noteTurnFailure();
         }
 
         if (isChatCompletions && result.status === 200) {
