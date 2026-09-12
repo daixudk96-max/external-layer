@@ -150,13 +150,21 @@ r2 = client.responses.create(model="chatgpt-web/latest",
 
 请求里声明标准 `tools`（function），模型发起 `function_call` → 客户端执行 → 以 `function_call_output` + `previous_response_id` 续回合，直到模型给出最终文本。服务端有自动重试预算兜底抽签拦截。
 
-### turn_id 幂等（可选）
+### 幂等回放（可选，需显式声明）
 
-同一 `turn_id` 重发 → 毫秒级回放已存响应（不重复执行）。Agent 每个新任务用新 id，重试用同 id：
+带 `Idempotency-Key` 头重发同一请求 → 毫秒级回放已存响应（不重复执行），响应带 `x-ext-layer-replay: true`。
+**不带该头时 `/v1/responses` 一律真的重跑**（原版上游本来就没有这种缓存；失败回合从不入缓存）；
+同一条对话的重发会落在**同一个上游 thread**（见下一节「对话接续」）。Agent 每个新任务用新 key，重试用同 key：
 
 ```json
 {"model":"chatgpt-web/latest","input":"...","client_metadata":{"x-codex-turn-metadata":{"turn_id":"task-42"}}}
 ```
+
+### 对话接续（缺省开启）
+
+外接层为每个客户端对话固定一个上游 `thread_id`（按历史前缀匹配，或客户端带 `previous_response_id` 时按该 id 反查），
+每回合只换 `turn_id`。上游因此复用保留中的 ChatGPT 临时会话、**只贴历史尾段**，不再每步重打全量。
+每个响应都带 `x-ext-layer-conversation: <threadId>`。`EXT_LAYER_CONTINUATION=0` 可退回「每步开新会话」做对照。
 
 ## 六、已知限制与运维
 

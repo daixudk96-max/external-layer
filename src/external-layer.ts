@@ -1,4 +1,5 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { ConversationRegistry } from "./conversation-registry";
 import { deriveIdempotencyKey, IdempotencyStore } from "./idempotency";
 import {
   chatCompletionsToResponses,
@@ -71,6 +72,12 @@ export interface ExternalLayerConfig {
   toolTimeouts?: Partial<ToolTimeoutsConfig>;
   /** 客户端断连时是否向 upstream 发送 POST /admin/interrupt-turn 中断上游回合。缺省 true。 */
   abortUpstreamTurns?: boolean;
+  /** 是否开启对话接续（复用同一个 upstream thread_id），缺省 true */
+  continuation?: boolean;
+  /** 对话注册表 LRU 容量上限，缺省 64 */
+  conversationLimit?: number;
+  /** 对话注册表持久化路径 */
+  conversationsPath?: string;
 }
 
 export interface ExternalLayerHandle {
@@ -231,10 +238,13 @@ function environmentEnvelope(environment: DefaultEnvironmentConfig): string {
 /** Translate a standard request into the upstream's Codex-native shape, minting a synthetic identity. */
 export function toNativeRequest(
   standard: Record<string, unknown>,
-  options: { defaultEnvironment?: DefaultEnvironmentConfig } = {},
+  options: {
+    defaultEnvironment?: DefaultEnvironmentConfig;
+    identity?: { threadId: string; turnId: string };
+  } = {},
 ): Record<string, unknown> {
-  const turnId = `prov-${randomUUID()}`;
-  const threadId = `prov-${randomUUID()}`;
+  const turnId = options.identity?.turnId ?? `prov-${randomUUID()}`;
+  const threadId = options.identity?.threadId ?? `prov-${randomUUID()}`;
   const items = normalizeInput(standard.input);
   const carriesEnvelope = items.some(item => /<\/?environment_context\b/i.test(itemPlainText(item)));
   if (!carriesEnvelope && options.defaultEnvironment) {
@@ -400,6 +410,24 @@ const PROGRESS_MARKERS = [
   "response.failed",
   "[DONE]",
 ];
+
+function extractResponseIdFromSse(fullText: string): string | undefined {
+  const lines = fullText.split("\n");
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("data:") && !trimmed.includes("[DONE]")) {
+      try {
+        const jsonStr = trimmed.slice(5).trim();
+        const data = JSON.parse(jsonStr) as Record<string, unknown>;
+        if (typeof data.id === "string") return data.id;
+        if (data.response && typeof (data.response as Record<string, unknown>).id === "string") {
+          return (data.response as Record<string, unknown>).id as string;
+        }
+      } catch {}
+    }
+  }
+  return undefined;
+}
 
 /**
  * 流内容进度看门狗：上游 2xx 流式转发时，维护双重守卫：
@@ -675,6 +703,11 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
   let lastError: string | undefined;
   const upstreamBase = config.upstreamBaseUrl.replace(/\/+$/, "");
   const idempotencyStore = new IdempotencyStore(config);
+  const continuationEnabled = config.continuation !== false;
+  const conversationRegistry = new ConversationRegistry({
+    limit: config.conversationLimit ?? 64,
+    statePath: config.conversationsPath,
+  });
 
   const server = Bun.serve({
     port: config.port ?? 0,
@@ -730,50 +763,81 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
 
         const isStreaming = Boolean(standard.stream);
         console.log(`[external-layer] req=${reqId} model=${requestedModel} stream=${isStreaming}`);
+
+        let previousResponseId: string | undefined;
+        if (typeof standard.previous_response_id === "string") {
+          previousResponseId = standard.previous_response_id;
+        } else if (typeof rawBody.previous_response_id === "string") {
+          previousResponseId = rawBody.previous_response_id;
+        }
+
+        const normalizedInputItems = normalizeInput(standard.input);
+        const resolvedThreadId = continuationEnabled
+          ? conversationRegistry.resolveConversation(
+              Array.isArray(standard.input) ? normalizedInputItems : [],
+              previousResponseId,
+            ).threadId
+          : `prov-${randomUUID()}`;
+
+        // Replay is opt-in: an explicit Idempotency-Key, the chat-completions surface, or a
+        // non-array (completion-style) body. A repeated /v1/responses body carrying a history
+        // ARRAY runs again on purpose — the unmodified upstream has no such cache, a failed turn
+        // is never stored, and answering with an older turn's text is worse than doing the work.
+        // What keeps a retry on the SAME ChatGPT conversation is the conversation registry above,
+        // not this cache.
+        const hasExplicitIdempotencyKey = Boolean(req.headers.get("idempotency-key")?.trim());
+        const shouldCheckIdempotency = isChatCompletions || hasExplicitIdempotencyKey || !Array.isArray(standard.input);
         const idempotencyKey = deriveIdempotencyKey(req.headers.get("idempotency-key"), standard);
 
-        const cached = idempotencyStore.get(idempotencyKey);
-        if (cached) {
-          logDone(cached.status);
-          if (isResponses) {
-            return new Response(cached.body, {
-              status: cached.status,
-              headers: {
-                "content-type": cached.contentType,
-                "x-ext-layer-replay": "true",
-              },
-            });
-          } else {
-            // isChatCompletions
-            if (!isStreaming) {
-              let parsed: unknown;
-              try {
-                parsed = JSON.parse(cached.body);
-              } catch {
-                parsed = {};
-              }
-              const chatJson = responsesToChatCompletions(parsed, requestedModel);
-              return Response.json(chatJson, {
-                status: cached.status,
-                headers: { "x-ext-layer-replay": "true" },
-              });
-            } else {
-              const replayStream = transformResponsesStreamToChatStream(
-                new ReadableStream({
-                  start(c) {
-                    c.enqueue(new TextEncoder().encode(cached.body));
-                    c.close();
-                  },
-                }),
-                requestedModel,
-              );
-              return new Response(replayStream, {
+        if (shouldCheckIdempotency) {
+          const cached = idempotencyStore.get(idempotencyKey);
+          if (cached) {
+            logDone(cached.status);
+            if (isResponses) {
+              return new Response(cached.body, {
                 status: cached.status,
                 headers: {
-                  "content-type": "text/event-stream",
+                  "content-type": cached.contentType,
                   "x-ext-layer-replay": "true",
+                  "x-ext-layer-conversation": resolvedThreadId,
                 },
               });
+            } else {
+              // isChatCompletions
+              if (!isStreaming) {
+                let parsed: unknown;
+                try {
+                  parsed = JSON.parse(cached.body);
+                } catch {
+                  parsed = {};
+                }
+                const chatJson = responsesToChatCompletions(parsed, requestedModel);
+                return Response.json(chatJson, {
+                  status: cached.status,
+                  headers: {
+                    "x-ext-layer-replay": "true",
+                    "x-ext-layer-conversation": resolvedThreadId,
+                  },
+                });
+              } else {
+                const replayStream = transformResponsesStreamToChatStream(
+                  new ReadableStream({
+                    start(c) {
+                      c.enqueue(new TextEncoder().encode(cached.body));
+                      c.close();
+                    },
+                  }),
+                  requestedModel,
+                );
+                return new Response(replayStream, {
+                  status: cached.status,
+                  headers: {
+                    "content-type": "text/event-stream",
+                    "x-ext-layer-replay": "true",
+                    "x-ext-layer-conversation": resolvedThreadId,
+                  },
+                });
+              }
             }
           }
         }
@@ -924,7 +988,10 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 const clonedStandard = JSON.parse(JSON.stringify(mappedResolution.mapped)) as Record<string, unknown>;
                 const native = toNativeRequest(
                   clonedStandard,
-                  { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
+                  {
+                    ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}),
+                    identity: { threadId: resolvedThreadId, turnId: `prov-${randomUUID()}` },
+                  },
                 );
                 const turnMeta = extractTurnIdentity(native);
                 if (turnMeta) {
@@ -1114,7 +1181,10 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             logFailed(errCode);
             return new Response(turnResult.bodyText, {
               status: turnResult.status,
-              headers: { "content-type": turnResult.contentType },
+              headers: {
+                "content-type": turnResult.contentType,
+                "x-ext-layer-conversation": resolvedThreadId,
+              },
             });
           }
 
@@ -1128,11 +1198,17 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             effectiveProgressTimeoutMs,
           );
           const recordedStream = tapStream(watchdogStream, (fullText) => {
-            idempotencyStore.save(idempotencyKey, {
-              status: 200,
-              body: fullText,
-              contentType: turnResult.contentType,
-            });
+            if (shouldCheckIdempotency) {
+              idempotencyStore.save(idempotencyKey, {
+                status: 200,
+                body: fullText,
+                contentType: turnResult.contentType,
+              });
+            }
+            if (continuationEnabled && Array.isArray(standard.input)) {
+              const respId = extractResponseIdFromSse(fullText);
+              conversationRegistry.recordTurn(resolvedThreadId, normalizedInputItems, respId);
+            }
             lastError = undefined;
             logDone(200);
           });
@@ -1178,6 +1254,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               headers: {
                 "content-type": turnResult.contentType,
                 ...(contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
+                "x-ext-layer-conversation": resolvedThreadId,
               },
             });
           } else {
@@ -1216,13 +1293,14 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               headers: {
                 "content-type": "text/event-stream",
                 ...(contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
+                "x-ext-layer-conversation": resolvedThreadId,
               },
             });
           }
         }
 
         // 非流式请求
-        const result = await idempotencyStore.runWithDeduplication(idempotencyKey, async () => {
+        const executeTurn = async () => {
           try {
             const response = await withTransientRetry(
               async (_attempt) => {
@@ -1233,7 +1311,10 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                 const clonedStandard = JSON.parse(JSON.stringify(mappedResolution.mapped)) as Record<string, unknown>;
                 const native = toNativeRequest(
                   clonedStandard,
-                  { ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}) },
+                  {
+                    ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}),
+                    identity: { threadId: resolvedThreadId, turnId: `prov-${randomUUID()}` },
+                  },
                 );
                 const turnMeta = extractTurnIdentity(native);
                 if (turnMeta) {
@@ -1433,7 +1514,11 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               contentType: "application/json",
             };
           }
-        });
+        };
+
+        const result = shouldCheckIdempotency
+          ? await idempotencyStore.runWithDeduplication(idempotencyKey, executeTurn)
+          : await executeTurn();
 
         if (abortUpstreamTurns && (req.signal.aborted || result.status === 499)) {
           turnCompleted = true;
@@ -1448,6 +1533,14 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
         }
 
         if (result.status === 200) {
+          if (continuationEnabled && Array.isArray(standard.input)) {
+            let respId: string | undefined;
+            try {
+              const parsed = JSON.parse(result.body);
+              if (typeof parsed.id === "string") respId = parsed.id;
+            } catch {}
+            conversationRegistry.recordTurn(resolvedThreadId, normalizedInputItems, respId);
+          }
           lastError = undefined;
           logDone(200);
         } else {
@@ -1472,6 +1565,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           return Response.json(chatJson, {
             headers: {
               ...(contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
+              "x-ext-layer-conversation": resolvedThreadId,
             },
           });
         }
@@ -1481,6 +1575,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           headers: {
             "content-type": result.contentType,
             ...(result.status === 200 && contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
+            "x-ext-layer-conversation": resolvedThreadId,
           },
         });
       }

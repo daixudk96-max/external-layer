@@ -30,7 +30,7 @@ Point any OpenAI-compatible client (agent harness, SDK, IDE plugin) at this laye
 | 5 | **Context windows derived from upstream** (`/v1/context`, `x_ext_layer_tier_windows`) | No hand-copied numbers: the layer reports exactly what upstream computed, so the deployment's `--bigger-context` switch (3×) is reflected automatically |
 | 6 | **Bounded retry + progress watchdog** | The failure mode this exists for: a stalled browser turn that hangs forever. Now: one upstream attempt, a real-content progress budget, then a loud `504 upstream_no_progress` |
 | 7 | **Turn interruption** on client abort or on giving up | A stalled turn must not keep occupying the browser while a retry opens a new one |
-| 8 | **Idempotent replay** (same body → byte-identical response, `x-ext-layer-replay: true`) | Client retries become free instead of opening a second 40-second browser turn |
+| 8 | **Idempotent replay** (explicit `Idempotency-Key` → byte-identical response, `x-ext-layer-replay: true`) | A client that knows a retry is a retry skips a second browser turn |
 | 9 | **Empty-completion fail-closed** (`502 empty_turn_content`) | A "completed" turn with no content never poisons the client's history |
 | 10 | **OAuth credential refresh** from your existing Codex login | Removes the `login expired` manual re-login loop |
 | 11 | **Account capabilities read from upstream home** (`solAvailable`/`proAvailable`) | Free vs Plus vs Pro accounts get the rows they can actually use; unavailable tiers fail loudly (`400`) instead of being silently downgraded |
@@ -116,7 +116,8 @@ The **context window is not a per-tier ladder on Pro accounts** — it is decide
 
 - **One upstream attempt per client request by default.** Retry multiplication (our retries × your client's retries) is what turns a transient browser hiccup into half an hour of spinning. Set `transientRetryLimit` only if your client does not retry.
 - **Progress, not bytes.** Upstream emits a heartbeat every second while the model thinks, so "no bytes" is useless as a liveness signal. The watchdog counts only frames that carry real work (text deltas, tool calls, terminal events) and aborts with `504 upstream_no_progress` after `EXT_LAYER_PROGRESS_MS` (default 240 s) — then it cancels the abandoned browser turn before your retry opens a new one.
-- **Idempotent replay.** A repeated identical body returns the stored response byte-for-byte with `x-ext-layer-replay: true` in milliseconds. Only 2xx responses are stored; a failed turn is never replayed as if it had succeeded.
+- **Idempotent replay is opt-in.** Only an explicit `Idempotency-Key` header (or the `/v1/chat/completions` surface) replays a stored response byte-for-byte with `x-ext-layer-replay: true`. A repeated body on `/v1/responses` runs again on purpose: the unmodified upstream has no such cache, a failed turn is never stored, and silently returning an older turn's text is worse than doing the work. Stored responses are 2xx only.
+- **Conversation continuation.** The facade keeps one upstream `thread_id` per client conversation (matched by history prefix, or by `previous_response_id` when the client sends one) and rotates only `turn_id`. The upstream then reuses its retained ChatGPT tab and pastes just the suffix of the transcript instead of retyping the whole history on every step — that is what keeps a long agent run from degrading into 10-minute steps. Every reply carries `x-ext-layer-conversation`. Tune with `EXT_LAYER_CONVERSATION_LIMIT` / `EXT_LAYER_CONVERSATIONS`; `EXT_LAYER_CONTINUATION=0` restores one fresh conversation per step.
 - **Client aborts propagate.** If your client disconnects, the browser turn is interrupted instead of running on.
 
 ## Tests

@@ -47,6 +47,12 @@ function parseBooleanEnv(raw?: string): boolean | undefined {
 const solAvailable = parseBooleanEnv(process.env.EXT_LAYER_SOL_AVAILABLE);
 const proAvailable = parseBooleanEnv(process.env.EXT_LAYER_PRO_AVAILABLE);
 
+const continuation = parseBooleanEnv(process.env.EXT_LAYER_CONTINUATION);
+const conversationLimit = process.env.EXT_LAYER_CONVERSATION_LIMIT !== undefined
+  ? Number(process.env.EXT_LAYER_CONVERSATION_LIMIT)
+  : undefined;
+const conversationsPath = process.env.EXT_LAYER_CONVERSATIONS;
+
 const upstreamHome = process.env.EXT_LAYER_UPSTREAM_HOME;
 
 // No shared default key ships with this repo: an unset EXT_LAYER_API_KEY generates a
@@ -70,6 +76,9 @@ const layer = await startExternalLayer({
   firstByteTimeoutMs,
   progressTimeoutMs,
   upstreamHome,
+  ...(continuation !== undefined ? { continuation } : {}),
+  ...(conversationLimit !== undefined ? { conversationLimit } : {}),
+  ...(conversationsPath ? { conversationsPath } : {}),
 });
 
 console.log(
