@@ -1,0 +1,36 @@
+name: Inspect investigation runs
+on:
+  push:
+    branches: [fix/tab-reuse-investigation-20260913]
+    paths: [.github/workflows/inspect-investigation.yml]
+permissions:
+  actions: read
+  contents: write
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner, repo = context.repo.repo;
+            const runs = await github.rest.actions.listWorkflowRunsForRepo({owner, repo, branch: 'fix/tab-reuse-investigation-20260913', per_page: 15});
+            const report = [];
+            for (const run of runs.data.workflow_runs) {
+              const jobs = await github.rest.actions.listJobsForWorkflowRun({owner, repo, run_id: run.id});
+              const item = {id: run.id, url: run.html_url, name: run.name, status: run.status, conclusion: run.conclusion, sha: run.head_sha, jobs: jobs.data.jobs.map(j => ({id:j.id, name:j.name, conclusion:j.conclusion, steps:j.steps}))};
+              report.push(item);
+              for (const job of jobs.data.jobs) {
+                if (job.conclusion === 'failure') {
+                  try {
+                    const log = await github.rest.actions.downloadJobLogsForWorkflowRun({owner, repo, job_id: job.id});
+                    item.failureLog = String(log.data).slice(-30000);
+                  } catch (error) { item.logError = String(error); }
+                }
+              }
+            }
+            const path = '_investigation-transfer/ci-status.json';
+            const branch = 'fix/tab-reuse-investigation-20260913';
+            let sha;
+            try { sha = (await github.rest.repos.getContent({owner, repo, path, ref: branch})).data.sha; } catch {}
+            await github.rest.repos.createOrUpdateFileContents({owner, repo, path, branch, sha, message: 'ci: record actual investigation run outcomes', content: Buffer.from(JSON.stringify(report, null, 2)).toString('base64')});
