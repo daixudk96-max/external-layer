@@ -63,7 +63,7 @@ export interface ExternalLayerConfig {
   idempotencyTtlMs?: number;
   /** 覆盖静默预算（秒），经 resolveStallTimeoutSec 解析 */
   stallTimeoutSec?: number;
-  /** 覆盖上游接单到首字节的预算（毫秒），缺省使用 toolTimeouts.generationTimeoutMs (300_000) */
+  /** 覆盖上游接单到首字节的预算（毫秒）；未设时跟随 progressTimeoutMs 的有效值（同一把“多久没真东西”的尺） */
   firstByteTimeoutMs?: number;
   /** progress deadline for a turn that produces no content-bearing frame; default 240000 ms */
   progressTimeoutMs?: number;

@@ -1,6 +1,6 @@
 @echo off
 setlocal
-rem Production shape: the verified configuration (progress budget 420s, one upstream
+rem Production shape: the verified configuration (progress budget 240s, one upstream
 rem attempt per client request, client-owned tools). Identical to start-external-layer.cmd
 rem but pins the operational defaults explicitly.
 set "PORT=17843"
