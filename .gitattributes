@@ -1,0 +1,7 @@
+# Normalize line endings in the repository, independent of the publisher's git config.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.sh  text eol=lf
+*.ts  text eol=lf
+*.md  text eol=lf
+*.json text eol=lf
