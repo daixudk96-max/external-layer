@@ -1,0 +1,181 @@
+{
+  "version": 2,
+  "capturedAt": "2026-09-12T15:44:23.568Z",
+  "traceId": "99fe08e84a9f",
+  "checkpoint": "connector-selected",
+  "state": {
+    "location": {
+      "origin": "https://chatgpt.com",
+      "pathSegments": 0,
+      "temporaryChat": true
+    },
+    "titleChars": 7,
+    "viewport": {
+      "width": 800,
+      "height": 600
+    },
+    "surfaceBound": true,
+    "bodyTextChars": 531401,
+    "composer": {
+      "visibleCount": 1,
+      "textChars": [
+        19
+      ],
+      "editors": [
+        {
+          "tag": "div",
+          "contentEditable": true,
+          "focused": true
+        }
+      ],
+      "selectedConnectorCount": 1,
+      "exactSelectedConnectorCount": 1
+    },
+    "focus": {
+      "tag": "div",
+      "role": "textbox",
+      "documentFocused": true
+    },
+    "effortControls": [
+      {
+        "tag": "button",
+        "role": null,
+        "ariaExpanded": "false",
+        "ariaChecked": null,
+        "dataState": "closed",
+        "dataHighlighted": null,
+        "rect": {
+          "x": 600.7999877929688,
+          "y": 259.9937438964844,
+          "width": 76,
+          "height": 36
+        },
+        "textChars": 2
+      }
+    ],
+    "effortItems": [
+      {
+        "tag": "div",
+        "role": "menuitemradio",
+        "ariaExpanded": null,
+        "ariaChecked": "true",
+        "dataState": "checked",
+        "dataHighlighted": null,
+        "rect": {
+          "x": 502.8000183105469,
+          "y": 290,
+          "width": 240,
+          "height": 36
+        },
+        "textChars": 2
+      },
+      {
+        "tag": "div",
+        "role": "menuitemradio",
+        "ariaExpanded": null,
+        "ariaChecked": "false",
+        "dataState": "unchecked",
+        "dataHighlighted": null,
+        "rect": {
+          "x": 502.8000183105469,
+          "y": 326,
+          "width": 240,
+          "height": 36
+        },
+        "textChars": 11
+      },
+      {
+        "tag": "div",
+        "role": "menuitemradio",
+        "ariaExpanded": null,
+        "ariaChecked": "false",
+        "dataState": "unchecked",
+        "dataHighlighted": null,
+        "rect": {
+          "x": 502.8000183105469,
+          "y": 362,
+          "width": 240,
+          "height": 36
+        },
+        "textChars": 7
+      }
+    ],
+    "effortSliders": [
+      {
+        "min": 0,
+        "max": 4,
+        "value": 3
+      }
+    ],
+    "menus": [
+      {
+        "tag": "div",
+        "role": "menu",
+        "ariaExpanded": null,
+        "ariaChecked": null,
+        "dataState": "closed",
+        "dataHighlighted": null,
+        "rect": {
+          "x": 492.8000183105469,
+          "y": 300,
+          "width": 260,
+          "height": 88
+        },
+        "textChars": 53
+      },
+      {
+        "tag": "div",
+        "role": "group",
+        "ariaExpanded": null,
+        "ariaChecked": null,
+        "dataState": null,
+        "dataHighlighted": null,
+        "rect": {
+          "x": 492.8000183105469,
+          "y": 310,
+          "width": 260,
+          "height": 68
+        },
+        "textChars": 53
+      }
+    ],
+    "connectorRows": [],
+    "overlays": [
+      {
+        "tag": "div",
+        "role": "alert",
+        "ariaExpanded": null,
+        "ariaChecked": null,
+        "dataState": null,
+        "dataHighlighted": null,
+        "rect": {
+          "x": -1,
+          "y": 599,
+          "width": 1,
+          "height": 1
+        },
+        "textChars": 0
+      },
+      {
+        "tag": "div",
+        "role": "status",
+        "ariaExpanded": null,
+        "ariaChecked": null,
+        "dataState": null,
+        "dataHighlighted": null,
+        "rect": {
+          "x": -1,
+          "y": 599,
+          "width": 1,
+          "height": 1
+        },
+        "textChars": 0
+      }
+    ],
+    "turns": {
+      "user": 0,
+      "stopButtonCount": 0,
+      "assistant": []
+    }
+  }
+}

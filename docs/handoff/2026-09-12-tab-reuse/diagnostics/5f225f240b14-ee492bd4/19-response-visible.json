@@ -1,0 +1,107 @@
+{
+  "version": 2,
+  "capturedAt": "2026-09-12T15:37:57.825Z",
+  "traceId": "5f225f240b14",
+  "checkpoint": "response-visible",
+  "state": {
+    "location": {
+      "origin": "https://chatgpt.com",
+      "pathSegments": 0,
+      "temporaryChat": true
+    },
+    "titleChars": 7,
+    "viewport": {
+      "width": 1152,
+      "height": 672
+    },
+    "surfaceBound": true,
+    "bodyTextChars": 508134,
+    "composer": {
+      "visibleCount": 1,
+      "textChars": [
+        0
+      ],
+      "editors": [
+        {
+          "tag": "div",
+          "contentEditable": true,
+          "focused": true
+        }
+      ],
+      "selectedConnectorCount": 0,
+      "exactSelectedConnectorCount": 0
+    },
+    "focus": {
+      "tag": "div",
+      "role": "textbox",
+      "documentFocused": true
+    },
+    "effortControls": [
+      {
+        "tag": "button",
+        "role": null,
+        "ariaExpanded": "false",
+        "ariaChecked": null,
+        "dataState": "closed",
+        "dataHighlighted": null,
+        "rect": {
+          "x": 858,
+          "y": 628.65625,
+          "width": 76,
+          "height": 36
+        },
+        "textChars": 2
+      }
+    ],
+    "effortItems": [],
+    "effortSliders": [],
+    "menus": [],
+    "connectorRows": [],
+    "overlays": [
+      {
+        "tag": "div",
+        "role": "alert",
+        "ariaExpanded": null,
+        "ariaChecked": null,
+        "dataState": null,
+        "dataHighlighted": null,
+        "rect": {
+          "x": -1,
+          "y": 671,
+          "width": 1,
+          "height": 1
+        },
+        "textChars": 0
+      },
+      {
+        "tag": "div",
+        "role": "status",
+        "ariaExpanded": null,
+        "ariaChecked": null,
+        "dataState": null,
+        "dataHighlighted": null,
+        "rect": {
+          "x": -1,
+          "y": 671,
+          "width": 1,
+          "height": 1
+        },
+        "textChars": 4
+      }
+    ],
+    "turns": {
+      "user": 1,
+      "stopButtonCount": 1,
+      "assistant": [
+        {
+          "textChars": 14,
+          "htmlChars": 1575,
+          "markdownCount": 0,
+          "streamingStatusCount": 0,
+          "completionActionCount": 0,
+          "renderedCompletionActionCount": 0
+        }
+      ]
+    }
+  }
+}

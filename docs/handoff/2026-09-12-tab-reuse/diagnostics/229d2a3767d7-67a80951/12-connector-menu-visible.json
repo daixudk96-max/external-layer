@@ -1,0 +1,127 @@
+{
+  "version": 2,
+  "capturedAt": "2026-09-12T15:38:13.164Z",
+  "traceId": "229d2a3767d7",
+  "checkpoint": "connector-menu-visible",
+  "state": {
+    "location": {
+      "origin": "https://chatgpt.com",
+      "pathSegments": 0,
+      "temporaryChat": true
+    },
+    "titleChars": 7,
+    "viewport": {
+      "width": 900,
+      "height": 594
+    },
+    "surfaceBound": true,
+    "bodyTextChars": 503938,
+    "composer": {
+      "visibleCount": 1,
+      "textChars": [
+        6
+      ],
+      "editors": [
+        {
+          "tag": "div",
+          "contentEditable": true,
+          "focused": true
+        }
+      ],
+      "selectedConnectorCount": 0,
+      "exactSelectedConnectorCount": 0
+    },
+    "focus": {
+      "tag": "div",
+      "role": "textbox",
+      "documentFocused": true
+    },
+    "effortControls": [
+      {
+        "tag": "button",
+        "role": null,
+        "ariaExpanded": "false",
+        "ariaChecked": null,
+        "dataState": "closed",
+        "dataHighlighted": null,
+        "rect": {
+          "x": 692.7999877929688,
+          "y": 257.46875,
+          "width": 76,
+          "height": 36
+        },
+        "textChars": 2
+      }
+    ],
+    "effortItems": [],
+    "effortSliders": [],
+    "menus": [],
+    "connectorRows": [
+      {
+        "tag": "div",
+        "role": null,
+        "dataState": null,
+        "dataHighlighted": "",
+        "rect": {
+          "x": 307.20001220703125,
+          "y": 353.4750061035156,
+          "width": 545.6000366210938,
+          "height": 36
+        },
+        "textChars": 22
+      }
+    ],
+    "overlays": [
+      {
+        "tag": "span",
+        "role": "status",
+        "ariaExpanded": null,
+        "ariaChecked": null,
+        "dataState": null,
+        "dataHighlighted": null,
+        "rect": {
+          "x": 814.2999877929688,
+          "y": 406.9750061035156,
+          "width": 1,
+          "height": 1
+        },
+        "textChars": 0
+      },
+      {
+        "tag": "div",
+        "role": "alert",
+        "ariaExpanded": null,
+        "ariaChecked": null,
+        "dataState": null,
+        "dataHighlighted": null,
+        "rect": {
+          "x": -1,
+          "y": 593,
+          "width": 1,
+          "height": 1
+        },
+        "textChars": 0
+      },
+      {
+        "tag": "div",
+        "role": "status",
+        "ariaExpanded": null,
+        "ariaChecked": null,
+        "dataState": null,
+        "dataHighlighted": null,
+        "rect": {
+          "x": -1,
+          "y": 593,
+          "width": 1,
+          "height": 1
+        },
+        "textChars": 0
+      }
+    ],
+    "turns": {
+      "user": 0,
+      "stopButtonCount": 0,
+      "assistant": []
+    }
+  }
+}

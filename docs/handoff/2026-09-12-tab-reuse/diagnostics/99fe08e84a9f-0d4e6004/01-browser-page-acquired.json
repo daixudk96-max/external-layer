@@ -1,0 +1,43 @@
+{
+  "version": 2,
+  "capturedAt": "2026-09-12T15:44:18.091Z",
+  "traceId": "99fe08e84a9f",
+  "checkpoint": "browser-page-acquired",
+  "state": {
+    "location": {
+      "origin": "null",
+      "pathSegments": 2,
+      "temporaryChat": false
+    },
+    "titleChars": 13,
+    "viewport": {
+      "width": 800,
+      "height": 600
+    },
+    "surfaceBound": true,
+    "bodyTextChars": 0,
+    "composer": {
+      "visibleCount": 0,
+      "textChars": [],
+      "editors": [],
+      "selectedConnectorCount": 0,
+      "exactSelectedConnectorCount": 0
+    },
+    "focus": {
+      "tag": "body",
+      "role": null,
+      "documentFocused": true
+    },
+    "effortControls": [],
+    "effortItems": [],
+    "effortSliders": [],
+    "menus": [],
+    "connectorRows": [],
+    "overlays": [],
+    "turns": {
+      "user": 0,
+      "stopButtonCount": 0,
+      "assistant": []
+    }
+  }
+}

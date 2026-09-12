@@ -1,0 +1,74 @@
+{
+  "version": 2,
+  "capturedAt": "2026-09-12T15:37:50.765Z",
+  "traceId": "5f225f240b14",
+  "checkpoint": "temporary-chat-navigation-complete",
+  "state": {
+    "location": {
+      "origin": "https://chatgpt.com",
+      "pathSegments": 0,
+      "temporaryChat": true
+    },
+    "titleChars": 42,
+    "viewport": {
+      "width": 900,
+      "height": 594
+    },
+    "surfaceBound": false,
+    "bodyTextChars": 503804,
+    "composer": {
+      "visibleCount": 0,
+      "textChars": [],
+      "editors": [],
+      "selectedConnectorCount": 0,
+      "exactSelectedConnectorCount": 0
+    },
+    "focus": {
+      "tag": "textarea",
+      "role": null,
+      "documentFocused": true
+    },
+    "effortControls": [],
+    "effortItems": [],
+    "effortSliders": [],
+    "menus": [],
+    "connectorRows": [],
+    "overlays": [
+      {
+        "tag": "div",
+        "role": "alert",
+        "ariaExpanded": null,
+        "ariaChecked": null,
+        "dataState": null,
+        "dataHighlighted": null,
+        "rect": {
+          "x": -1,
+          "y": 593,
+          "width": 1,
+          "height": 1
+        },
+        "textChars": 0
+      },
+      {
+        "tag": "div",
+        "role": "status",
+        "ariaExpanded": null,
+        "ariaChecked": null,
+        "dataState": null,
+        "dataHighlighted": null,
+        "rect": {
+          "x": -1,
+          "y": 593,
+          "width": 1,
+          "height": 1
+        },
+        "textChars": 0
+      }
+    ],
+    "turns": {
+      "user": 0,
+      "stopButtonCount": 0,
+      "assistant": []
+    }
+  }
+}
