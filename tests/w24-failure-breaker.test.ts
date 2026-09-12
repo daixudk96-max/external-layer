@@ -16,7 +16,9 @@
  *
  * Frozen contract:
  *  - New config `failureBreaker?: { enabled?; failureThreshold?; payloadCharsThreshold?; cooldownMs?; now? }`
- *    (default ENABLED, threshold 3, payloadCharsThreshold 50_000, cooldownMs 300_000, `now` injectable clock).
+ *    (default ENABLED, threshold 3, payloadCharsThreshold 150_000 since 2026-09-12 (continuation era: a 186k-char payload
+ *    completed; the old 50_000 mis-nudged healthy compacted conversations), cooldownMs 300_000,
+ *    `now` injectable clock).
  *  - Per-conversation (per resolved thread) consecutive-failure counter. A failure QUALIFIES only when
  *    the request payload (sum of JSON.stringify(item).length over normalized input items + instructions)
  *    is >= payloadCharsThreshold. `client_aborted` (user pressed stop) never counts. Client-side 4xx
@@ -40,7 +42,9 @@ import { expect, test } from "bun:test";
 import { startExternalLayer } from "../src/external-layer";
 
 const KEY = "sk-test-key";
-const BIG = "x".repeat(60_000);
+// 2026-09-12: raised past the new default payloadCharsThreshold (150_000) so the
+// big-payload contracts keep exercising the DEFAULT threshold (previously 60_000 > 50_000).
+const BIG = "x".repeat(160_000);
 
 const user = (text: string) => ({ type: "message", role: "user", content: text });
 const bigConv = (suffix: string) => [user(BIG + suffix)];

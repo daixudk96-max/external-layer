@@ -18,7 +18,7 @@ export interface FailureBreakerConfig {
   enabled?: boolean;
   /** consecutive qualifying failures before the conversation is refused; default 3 */
   failureThreshold?: number;
-  /** a failure only counts when the request payload is at least this many chars; default 50_000 */
+  /** a failure only counts when the request payload is at least this many chars; default 150_000 */
   payloadCharsThreshold?: number;
   /** refusal window after tripping; one attempt is allowed after it expires; default 300_000 */
   cooldownMs?: number;
@@ -27,7 +27,7 @@ export interface FailureBreakerConfig {
 }
 
 export const DEFAULT_FAILURE_THRESHOLD = 3;
-export const DEFAULT_PAYLOAD_CHARS_THRESHOLD = 50_000;
+export const DEFAULT_PAYLOAD_CHARS_THRESHOLD = 150_000;
 export const DEFAULT_COOLDOWN_MS = 300_000;
 /** chars -> tokens, calibrated on live data (102,808 chars <-> 39,866 tokens ≈ 2.58 chars/token) */
 const CHARS_PER_TOKEN = 2.5;
