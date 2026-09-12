@@ -1,0 +1,324 @@
+[
+  {
+    "id": 34715476126,
+    "url": "https://github.com/daixudk96-max/external-layer/actions/runs/34715476126",
+    "name": "Inspect investigation runs",
+    "status": "in_progress",
+    "conclusion": null,
+    "sha": "92009c8bfe059907e77e3286ce14e6ecfc6c29af",
+    "jobs": [
+      {
+        "id": 103611814890,
+        "name": "inspect",
+        "conclusion": null,
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-09-12T19:53:33Z",
+            "completed_at": "2026-09-12T19:53:34Z"
+          },
+          {
+            "name": "Run actions/github-script@v7",
+            "status": "in_progress",
+            "conclusion": null,
+            "number": 2,
+            "started_at": "2026-09-12T19:53:34Z",
+            "completed_at": null
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 34715475548,
+    "url": "https://github.com/daixudk96-max/external-layer/actions/runs/34715475548",
+    "name": ".github/workflows/tab-reuse-investigation.yml",
+    "status": "completed",
+    "conclusion": "failure",
+    "sha": "92009c8bfe059907e77e3286ce14e6ecfc6c29af",
+    "jobs": []
+  },
+  {
+    "id": 34715414283,
+    "url": "https://github.com/daixudk96-max/external-layer/actions/runs/34715414283",
+    "name": "Finalize tab reuse investigation",
+    "status": "completed",
+    "conclusion": "failure",
+    "sha": "ee92689c6aa72c249b03cf5465c55cd98d2f49cb",
+    "jobs": [
+      {
+        "id": 103611654407,
+        "name": "finalize",
+        "conclusion": "failure",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-09-12T19:52:14Z",
+            "completed_at": "2026-09-12T19:52:15Z"
+          },
+          {
+            "name": "Run actions/checkout@v4",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-09-12T19:52:15Z",
+            "completed_at": "2026-09-12T19:52:16Z"
+          },
+          {
+            "name": "Run oven-sh/setup-bun@v2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-09-12T19:52:16Z",
+            "completed_at": "2026-09-12T19:52:17Z"
+          },
+          {
+            "name": "Run bun install --frozen-lockfile",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-09-12T19:52:17Z",
+            "completed_at": "2026-09-12T19:52:17Z"
+          },
+          {
+            "name": "Preserve pristine baseline results",
+            "status": "completed",
+            "conclusion": "failure",
+            "number": 5,
+            "started_at": "2026-09-12T19:52:17Z",
+            "completed_at": "2026-09-12T19:52:17Z"
+          },
+          {
+            "name": "Read exact reviewed patch",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 6,
+            "started_at": "2026-09-12T19:52:17Z",
+            "completed_at": "2026-09-12T19:52:17Z"
+          },
+          {
+            "name": "Apply checked patch and cancellation regressions",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 7,
+            "started_at": "2026-09-12T19:52:17Z",
+            "completed_at": "2026-09-12T19:52:17Z"
+          },
+          {
+            "name": "Run exact requested checks",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 8,
+            "started_at": "2026-09-12T19:52:17Z",
+            "completed_at": "2026-09-12T19:52:17Z"
+          },
+          {
+            "name": "Commit source and transparent verification record",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 9,
+            "started_at": "2026-09-12T19:52:17Z",
+            "completed_at": "2026-09-12T19:52:17Z"
+          },
+          {
+            "name": "Enforce green result",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 10,
+            "started_at": "2026-09-12T19:52:17Z",
+            "completed_at": "2026-09-12T19:52:17Z"
+          },
+          {
+            "name": "Post Run oven-sh/setup-bun@v2",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 19,
+            "started_at": "2026-09-12T19:52:17Z",
+            "completed_at": "2026-09-12T19:52:17Z"
+          },
+          {
+            "name": "Post Run actions/checkout@v4",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 20,
+            "started_at": "2026-09-12T19:52:17Z",
+            "completed_at": "2026-09-12T19:52:17Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 21,
+            "started_at": "2026-09-12T19:52:17Z",
+            "completed_at": "2026-09-12T19:52:17Z"
+          }
+        ]
+      }
+    ],
+    "failureLog": "2026-09-12T19:52:14.4267421Z Current runner version: '2.337.0'\n2026-09-12T19:52:14.4304328Z ##[group]Runner Image Provisioner\n2026-09-12T19:52:14.4305882Z Hosted Compute Agent\n2026-09-12T19:52:14.4307137Z Version: 20260828.587\n2026-09-12T19:52:14.4308297Z Commit: abac92662cab4cc7352de4f9f9d2e2419aad9c29\n2026-09-12T19:52:14.4309580Z Build Date: 2026-08-28T16:44:25Z\n2026-09-12T19:52:14.4310665Z Worker ID: {5da091b1-f9d9-4e86-ab6b-81766a9cc16b}\n2026-09-12T19:52:14.4311950Z Azure Region: eastus\n2026-09-12T19:52:14.4312922Z ##[endgroup]\n2026-09-12T19:52:14.4315842Z ##[group]Operating System\n2026-09-12T19:52:14.4317212Z Ubuntu\n2026-09-12T19:52:14.4318017Z 24.04.5\n2026-09-12T19:52:14.4319126Z LTS\n2026-09-12T19:52:14.4320050Z ##[endgroup]\n2026-09-12T19:52:14.4320992Z ##[group]Runner Image\n2026-09-12T19:52:14.4321962Z Image: ubuntu-24.04\n2026-09-12T19:52:14.4322927Z Version: 20260907.300.1\n2026-09-12T19:52:14.4325149Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260907.300/images/ubuntu/Ubuntu2404-Readme.md\n2026-09-12T19:52:14.4328194Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260907.300\n2026-09-12T19:52:14.4329925Z ##[endgroup]\n2026-09-12T19:52:14.4332020Z ##[group]GITHUB_TOKEN Permissions\n2026-09-12T19:52:14.4335006Z Contents: write\n2026-09-12T19:52:14.4336054Z Metadata: read\n2026-09-12T19:52:14.4337331Z PullRequests: write\n2026-09-12T19:52:14.4338264Z ##[endgroup]\n2026-09-12T19:52:14.4341572Z Secret source: Actions\n2026-09-12T19:52:14.4343001Z Cache mode: write\n2026-09-12T19:52:14.4344560Z Prepare workflow directory\n2026-09-12T19:52:14.4847173Z Prepare all required actions\n2026-09-12T19:52:14.4920545Z Getting action download info\n2026-09-12T19:52:14.6948153Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)\n2026-09-12T19:52:14.8127158Z Download action repository 'oven-sh/setup-bun@v2' (SHA:0c5077e51419868618aeaa5fe8019c62421857d6)\n2026-09-12T19:52:14.9621594Z Download action repository 'actions/github-script@v7' (SHA:f28e40c7f34bde8b3046d885e986cb6290c5673b)\n2026-09-12T19:52:15.2058510Z Complete job name: finalize\n2026-09-12T19:52:15.2897623Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\n2026-09-12T19:52:15.2907439Z ##[group]Run actions/checkout@v4\n2026-09-12T19:52:15.2908209Z with:\n2026-09-12T19:52:15.2908656Z   fetch-depth: 0\n2026-09-12T19:52:15.2909154Z   repository: daixudk96-max/external-layer\n2026-09-12T19:52:15.2913275Z   token: ***\n2026-09-12T19:52:15.2913720Z   ssh-strict: true\n2026-09-12T19:52:15.2914171Z   ssh-user: git\n2026-09-12T19:52:15.2914656Z   persist-credentials: true\n2026-09-12T19:52:15.2915168Z   clean: true\n2026-09-12T19:52:15.2915638Z   sparse-checkout-cone-mode: true\n2026-09-12T19:52:15.2916175Z   fetch-tags: false\n2026-09-12T19:52:15.2916895Z   show-progress: true\n2026-09-12T19:52:15.2917392Z   lfs: false\n2026-09-12T19:52:15.2917878Z   submodules: false\n2026-09-12T19:52:15.2918340Z   set-safe-directory: true\n2026-09-12T19:52:15.2918866Z   allow-unsafe-pr-checkout: false\n2026-09-12T19:52:15.2919667Z ##[endgroup]\n2026-09-12T19:52:15.3991247Z Syncing repository: daixudk96-max/external-layer\n2026-09-12T19:52:15.3994430Z ##[group]Getting Git version info\n2026-09-12T19:52:15.3995878Z Working directory is '/home/runner/work/external-layer/external-layer'\n2026-09-12T19:52:15.3998779Z [command]/usr/bin/git version\n2026-09-12T19:52:15.4117061Z git version 2.55.0\n2026-09-12T19:52:15.4146879Z ##[endgroup]\n2026-09-12T19:52:15.4199696Z Temporarily overriding HOME='/home/runner/work/_temp/8255eb79-c040-45a7-b51b-290b27f75dda' before making global git config changes\n2026-09-12T19:52:15.4202718Z Adding repository directory to the temporary git global config as a safe directory\n2026-09-12T19:52:15.4209000Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/external-layer/external-layer\n2026-09-12T19:52:15.4282534Z Deleting the contents of '/home/runner/work/external-layer/external-layer'\n2026-09-12T19:52:15.4288427Z ##[group]Initializing the repository\n2026-09-12T19:52:15.4293915Z [command]/usr/bin/git init /home/runner/work/external-layer/external-layer\n2026-09-12T19:52:15.4470179Z hint: Using 'master' as the name for the initial branch. This default branch name\n2026-09-12T19:52:15.4472585Z hint: will change to \"main\" in Git 3.0. To configure the initial branch name\n2026-09-12T19:52:15.4482759Z hint: to use in all of your new repositories, which will suppress this warning,\n2026-09-12T19:52:15.4484541Z hint: call:\n2026-09-12T19:52:15.4485639Z hint:\n2026-09-12T19:52:15.4487236Z hint: \tgit config --global init.defaultBranch <name>\n2026-09-12T19:52:15.4488694Z hint:\n2026-09-12T19:52:15.4490082Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and\n2026-09-12T19:52:15.4492566Z hint: 'development'. The just-created branch can be renamed via this command:\n2026-09-12T19:52:15.4494361Z hint:\n2026-09-12T19:52:15.4495441Z hint: \tgit branch -m <name>\n2026-09-12T19:52:15.4496940Z hint:\n2026-09-12T19:52:15.4498574Z hint: Disable this message with \"git config set advice.defaultBranchName false\"\n2026-09-12T19:52:15.4501050Z Initialized empty Git repository in /home/runner/work/external-layer/external-layer/.git/\n2026-09-12T19:52:15.4505539Z [command]/usr/bin/git remote add origin https://github.com/daixudk96-max/external-layer\n2026-09-12T19:52:15.4585690Z ##[endgroup]\n2026-09-12T19:52:15.4587782Z ##[group]Disabling automatic garbage collection\n2026-09-12T19:52:15.4589543Z [command]/usr/bin/git config --local gc.auto 0\n2026-09-12T19:52:15.4638140Z ##[endgroup]\n2026-09-12T19:52:15.4641181Z ##[group]Setting up auth\n2026-09-12T19:52:15.4645632Z [command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n2026-09-12T19:52:15.4692588Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n2026-09-12T19:52:15.5145383Z [command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n2026-09-12T19:52:15.5182750Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n2026-09-12T19:52:15.5445344Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n2026-09-12T19:52:15.5486177Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n2026-09-12T19:52:15.5731708Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***\n2026-09-12T19:52:15.5788034Z ##[endgroup]\n2026-09-12T19:52:15.5789503Z ##[group]Fetching the repository\n2026-09-12T19:52:15.5803518Z [command]/usr/bin/git -c protocol.version=2 fetch --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*\n2026-09-12T19:52:15.9803672Z From https://github.com/daixudk96-max/external-layer\n2026-09-12T19:52:15.9819827Z  * [new branch]      fix/tab-reuse-audit-20260913 -> origin/fix/tab-reuse-audit-20260913\n2026-09-12T19:52:15.9822840Z  * [new branch]      fix/tab-reuse-investigation-20260913 -> origin/fix/tab-reuse-investigation-20260913\n2026-09-12T19:52:15.9825072Z  * [new branch]      master     -> origin/master\n2026-09-12T19:52:15.9826699Z  * [new tag]         v0.1.0     -> v0.1.0\n2026-09-12T19:52:15.9831293Z [command]/usr/bin/git branch --list --remote origin/fix/tab-reuse-investigation-20260913\n2026-09-12T19:52:15.9865495Z   origin/fix/tab-reuse-investigation-20260913\n2026-09-12T19:52:15.9899926Z [command]/usr/bin/git rev-parse refs/remotes/origin/fix/tab-reuse-investigation-20260913\n2026-09-12T19:52:15.9928133Z ee92689c6aa72c249b03cf5465c55cd98d2f49cb\n2026-09-12T19:52:15.9933777Z ##[endgroup]\n2026-09-12T19:52:15.9936688Z ##[group]Determining the checkout info\n2026-09-12T19:52:15.9939449Z ##[endgroup]\n2026-09-12T19:52:15.9954001Z [command]/usr/bin/git sparse-checkout disable\n2026-09-12T19:52:16.0030106Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig\n2026-09-12T19:52:16.0069808Z ##[group]Checking out the ref\n2026-09-12T19:52:16.0075118Z [command]/usr/bin/git checkout --progress --force -B fix/tab-reuse-investigation-20260913 refs/remotes/origin/fix/tab-reuse-investigation-20260913\n2026-09-12T19:52:16.0242021Z Switched to a new branch 'fix/tab-reuse-investigation-20260913'\n2026-09-12T19:52:16.0249076Z branch 'fix/tab-reuse-investigation-20260913' set up to track 'origin/fix/tab-reuse-investigation-20260913'.\n2026-09-12T19:52:16.0256908Z ##[endgroup]\n2026-09-12T19:52:16.0306891Z [command]/usr/bin/git log -1 --format=%H\n2026-09-12T19:52:16.0336483Z ee92689c6aa72c249b03cf5465c55cd98d2f49cb\n2026-09-12T19:52:16.0840157Z ##[group]Run oven-sh/setup-bun@v2\n2026-09-12T19:52:16.0841884Z with:\n2026-09-12T19:52:16.0842742Z   bun-version: 1.3.10\n2026-09-12T19:52:16.0843902Z   no-cache: false\n2026-09-12T19:52:16.0883609Z   token: ***\n2026-09-12T19:52:16.0884221Z ##[endgroup]\n2026-09-12T19:52:16.3720926Z Downloading a new version of Bun: https://github.com/oven-sh/bun/releases/download/bun-v1.3.10/bun-linux-x64.zip\n2026-09-12T19:52:16.6478254Z [command]/usr/bin/unzip -o -q /home/runner/work/_temp/15552ec8-07bb-41dd-9361-f7f247280de9.zip\n2026-09-12T19:52:17.3895594Z [command]/home/runner/.bun/bin/bun --revision\n2026-09-12T19:52:17.3942335Z 1.3.10+30e609e08\n2026-09-12T19:52:17.4096682Z ##[group]Run bun install --frozen-lockfile\n2026-09-12T19:52:17.4097157Z \u001b[36;1mbun install --frozen-lockfile\u001b[0m\n2026-09-12T19:52:17.4140643Z shell: /usr/bin/bash -e {0}\n2026-09-12T19:52:17.4140947Z ##[endgroup]\n2026-09-12T19:52:17.4252041Z bun install v1.3.10 (30e609e0)\n2026-09-12T19:52:17.4270899Z Resolving dependencies\n2026-09-12T19:52:17.6368146Z Resolved, downloaded and extracted [12]\n2026-09-12T19:52:17.6464622Z \n2026-09-12T19:52:17.6465170Z + bun-types@1.4.2\n2026-09-12T19:52:17.6466562Z \n2026-09-12T19:52:17.6466879Z 3 packages installed [222.00ms]\n2026-09-12T19:52:17.6539617Z ##[group]Run mkdir -p /tmp/tab-investigation-results\n2026-09-12T19:52:17.6540108Z \u001b[36;1mmkdir -p /tmp/tab-investigation-results\u001b[0m\n2026-09-12T19:52:17.6540701Z \u001b[36;1mgit worktree add --detach /tmp/tab-investigation-baseline 714c56816c3f91c49b786c79cc2af972aa4dc6f35e67\u001b[0m\n2026-09-12T19:52:17.6541404Z \u001b[36;1mln -s \"$GITHUB_WORKSPACE/node_modules\" /tmp/tab-investigation-baseline/node_modules\u001b[0m\n2026-09-12T19:52:17.6541856Z \u001b[36;1mset +e\u001b[0m\n2026-09-12T19:52:17.6542359Z \u001b[36;1m(cd /tmp/tab-investigation-baseline && bunx tsc --noEmit) > /tmp/tab-investigation-results/baseline-typecheck.txt 2>&1\u001b[0m\n2026-09-12T19:52:17.6543086Z \u001b[36;1mecho \"BASELINE_TYPECHECK_EXIT=$?\" > /tmp/tab-investigation-results/status.txt\u001b[0m\n2026-09-12T19:52:17.6543746Z \u001b[36;1m(cd /tmp/tab-investigation-baseline && bun test) > /tmp/tab-investigation-results/baseline-tests.txt 2>&1\u001b[0m\n2026-09-12T19:52:17.6544402Z \u001b[36;1mecho \"BASELINE_TEST_EXIT=$?\" >> /tmp/tab-investigation-results/status.txt\u001b[0m\n2026-09-12T19:52:17.6544823Z \u001b[36;1mexit 0\u001b[0m\n2026-09-12T19:52:17.6586578Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-09-12T19:52:17.6587017Z ##[endgroup]\n2026-09-12T19:52:17.6683110Z fatal: invalid reference: 714c56816c3f91c49b786c79cc2af972aa4dc6f35e67\n2026-09-12T19:52:17.6698030Z ##[error]Process completed with exit code 128.\n2026-09-12T19:52:17.6875161Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\n2026-09-12T19:52:17.6876701Z Post job cleanup.\n2026-09-12T19:52:17.7775516Z [command]/usr/bin/git version\n2026-09-12T19:52:17.7823294Z git version 2.55.0\n2026-09-12T19:52:17.7866561Z Temporarily overriding HOME='/home/runner/work/_temp/524a0aaf-f2e3-4ef3-b46b-afb6241e3113' before making global git config changes\n2026-09-12T19:52:17.7868600Z Adding repository directory to the temporary git global config as a safe directory\n2026-09-12T19:52:17.7873281Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/external-layer/external-layer\n2026-09-12T19:52:17.7919173Z [command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n2026-09-12T19:52:17.7957953Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n2026-09-12T19:52:17.8227844Z [command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n2026-09-12T19:52:17.8261281Z http.https://github.com/.extraheader\n2026-09-12T19:52:17.8273932Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader\n2026-09-12T19:52:17.8314854Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n2026-09-12T19:52:17.8618566Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n2026-09-12T19:52:17.8674626Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n2026-09-12T19:52:17.9174485Z Cleaning up orphan processes\n2026-09-12T19:52:17.9641980Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\n"
+  },
+  {
+    "id": 34715413718,
+    "url": "https://github.com/daixudk96-max/external-layer/actions/runs/34715413718",
+    "name": ".github/workflows/tab-reuse-investigation.yml",
+    "status": "completed",
+    "conclusion": "failure",
+    "sha": "ee92689c6aa72c249b03cf5465c55cd98d2f49cb",
+    "jobs": []
+  },
+  {
+    "id": 34715387096,
+    "url": "https://github.com/daixudk96-max/external-layer/actions/runs/34715387096",
+    "name": ".github/workflows/tab-reuse-investigation.yml",
+    "status": "completed",
+    "conclusion": "failure",
+    "sha": "53499e3251f2636884835ac6c51597c1193dcbf5",
+    "jobs": []
+  },
+  {
+    "id": 34715004662,
+    "url": "https://github.com/daixudk96-max/external-layer/actions/runs/34715004662",
+    "name": ".github/workflows/tab-reuse-investigation.yml",
+    "status": "completed",
+    "conclusion": "failure",
+    "sha": "1ba96f5bd73121685f588dd571a76482fa9a9349",
+    "jobs": []
+  },
+  {
+    "id": 34710884836,
+    "url": "https://github.com/daixudk96-max/external-layer/actions/runs/34710884836",
+    "name": ".github/workflows/tab-reuse-investigation.yml",
+    "status": "completed",
+    "conclusion": "failure",
+    "sha": "99aa6b90e32fe7cc3b3d78352848e12669d8b9e2",
+    "jobs": []
+  },
+  {
+    "id": 34709964374,
+    "url": "https://github.com/daixudk96-max/external-layer/actions/runs/34709964374",
+    "name": "Tab reuse investigation",
+    "status": "completed",
+    "conclusion": "failure",
+    "sha": "adae852506e95d163d0a44cd77222641a973cbdf",
+    "jobs": [
+      {
+        "id": 103596805649,
+        "name": "baseline",
+        "conclusion": "failure",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-09-12T18:02:01Z",
+            "completed_at": "2026-09-12T18:02:02Z"
+          },
+          {
+            "name": "Run actions/checkout@v4",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-09-12T18:02:02Z",
+            "completed_at": "2026-09-12T18:02:03Z"
+          },
+          {
+            "name": "Run oven-sh/setup-bun@v2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-09-12T18:02:03Z",
+            "completed_at": "2026-09-12T18:02:05Z"
+          },
+          {
+            "name": "Install development tools without changing manifests",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-09-12T18:02:05Z",
+            "completed_at": "2026-09-12T18:02:10Z"
+          },
+          {
+            "name": "Record tool versions",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-09-12T18:02:10Z",
+            "completed_at": "2026-09-12T18:02:10Z"
+          },
+          {
+            "name": "Typecheck unchanged source",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-09-12T18:02:10Z",
+            "completed_at": "2026-09-12T18:02:11Z"
+          },
+          {
+            "name": "Run unchanged tests",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-09-12T18:02:11Z",
+            "completed_at": "2026-09-12T18:03:05Z"
+          },
+          {
+            "name": "Package source and development runtime for offline investigation",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-09-12T18:03:05Z",
+            "completed_at": "2026-09-12T18:03:12Z"
+          },
+          {
+            "name": "Run actions/upload-artifact@v4",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-09-12T18:03:12Z",
+            "completed_at": "2026-09-12T18:03:15Z"
+          },
+          {
+            "name": "Enforce both baseline gates",
+            "status": "completed",
+            "conclusion": "failure",
+            "number": 10,
+            "started_at": "2026-09-12T18:03:15Z",
+            "completed_at": "2026-09-12T18:03:15Z"
+          },
+          {
+            "name": "Post Run oven-sh/setup-bun@v2",
+            "status": "completed",
+            "conclusion": "skipped",
+            "number": 19,
+            "started_at": "2026-09-12T18:03:15Z",
+            "completed_at": "2026-09-12T18:03:15Z"
+          },
+          {
+            "name": "Post Run actions/checkout@v4",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 20,
+            "started_at": "2026-09-12T18:03:15Z",
+            "completed_at": "2026-09-12T18:03:15Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 21,
+            "started_at": "2026-09-12T18:03:15Z",
+            "completed_at": "2026-09-12T18:03:15Z"
+          }
+        ]
+      }
+    ],
+    "failureLog": "p the thread and change only the turn [3.12ms]\n2026-09-12T18:02:50.2082795Z [external-layer] req=043ab723 model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2087145Z [external-layer] req=043ab723 done status=200 elapsed=0ms\n2026-09-12T18:02:50.2088927Z [external-layer] req=65319249 model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2091932Z [external-layer] req=65319249 done status=200 elapsed=1ms\n2026-09-12T18:02:50.2097183Z (pass) A6 previous_response_id continues the thread even with a chopped history [2.33ms]\n2026-09-12T18:02:50.2106158Z [external-layer] req=bc1bd4b3 model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2109537Z [external-layer] req=bc1bd4b3 done status=200 elapsed=0ms\n2026-09-12T18:02:50.2111532Z [external-layer] req=5f61644f model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2114276Z [external-layer] req=5f61644f done status=200 elapsed=0ms\n2026-09-12T18:02:50.2115744Z (pass) A7 continuation:false restores one fresh thread per turn [2.21ms]\n2026-09-12T18:02:50.2127830Z [external-layer] req=3efe9337 model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2131914Z [external-layer] req=3efe9337 done status=200 elapsed=1ms\n2026-09-12T18:02:50.2133977Z [external-layer] req=2c712d02 model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2137775Z [external-layer] req=2c712d02 done status=200 elapsed=0ms\n2026-09-12T18:02:50.2139795Z [external-layer] req=4a4cf110 model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2143750Z [external-layer] req=4a4cf110 done status=200 elapsed=1ms\n2026-09-12T18:02:50.2148901Z (pass) A8 the conversation registry is bounded [2.97ms]\n2026-09-12T18:02:50.2158847Z [external-layer] req=0dbc9abf model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2162449Z [external-layer] req=0dbc9abf done status=200 elapsed=1ms\n2026-09-12T18:02:50.2163619Z (pass) A9 the facade adds no global side effects [1.80ms]\n2026-09-12T18:02:50.2176582Z [external-layer] req=2f2e3b2d model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2180010Z [external-layer] req=2f2e3b2d done status=200 elapsed=0ms\n2026-09-12T18:02:50.2182005Z [external-layer] req=d2471567 model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2185716Z [external-layer] req=d2471567 done status=200 elapsed=0ms\n2026-09-12T18:02:50.2186942Z (pass) A10 the facade never slices history itself [2.32ms]\n2026-09-12T18:02:50.2199635Z [external-layer] req=8de856bf model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2204125Z [external-layer] req=8de856bf done status=200 elapsed=1ms\n2026-09-12T18:02:50.2206080Z [external-layer] req=bbbb9a50 model=chatgpt-web/high stream=false\n2026-09-12T18:02:50.2209292Z [external-layer] req=bbbb9a50 done status=200 elapsed=0ms\n2026-09-12T18:02:50.2211439Z (pass) A11 the synthesized environment envelope stays a separate item, and history is still whole [2.39ms]\n2026-09-12T18:02:50.2211886Z \n2026-09-12T18:02:50.2212171Z ##[endgroup]\n2026-09-12T18:02:50.2212297Z \n2026-09-12T18:02:50.2212571Z ##[group]tests/w17-abort-propagation.test.ts:\n2026-09-12T18:02:50.2244886Z [external-layer] req=0872abcf model=chatgpt-web/latest stream=false\n2026-09-12T18:02:50.6252602Z [external-layer] req=0872abcf failed code=client_aborted elapsed=401ms\n2026-09-12T18:02:51.3459435Z (pass) A1 an aborted turn issues exactly one interrupt with the facade's own minted identity (default on) [1123.02ms]\n2026-09-12T18:02:51.3476347Z [external-layer] req=388d195e model=chatgpt-web/latest stream=false\n2026-09-12T18:02:54.3487264Z [external-layer] req=388d195e done status=200 elapsed=3001ms\n2026-09-12T18:02:55.0626678Z (pass) A2 abortUpstreamTurns:false issues no interrupt at all and leaves the upstream turn running [3716.66ms]\n2026-09-12T18:02:55.0642383Z [external-layer] req=e9f07955 model=chatgpt-web/latest stream=false\n2026-09-12T18:02:55.0649267Z [external-layer] req=e9f07955 done status=200 elapsed=0ms\n2026-09-12T18:02:55.7655912Z (pass) A3 a normal turn still returns 200 status:completed and issues no interrupt [702.96ms]\n2026-09-12T18:02:55.7676805Z [external-layer] req=71a7d8ca model=chatgpt-web/latest stream=false\n2026-09-12T18:02:55.7683080Z [external-layer] req=71a7d8ca done status=200 elapsed=1ms\n2026-09-12T18:02:56.7690505Z (pass) A4 aborting after the turn has already completed interrupts nothing [1003.42ms]\n2026-09-12T18:02:56.7711996Z [external-layer] req=5deb5578 model=chatgpt-web/latest stream=false\n2026-09-12T18:02:57.1716517Z [external-layer] req=5deb5578 failed code=client_aborted elapsed=400ms\n2026-09-12T18:02:58.6808858Z [external-layer] req=6f84e430 model=chatgpt-web/latest stream=false\n2026-09-12T18:02:58.6818481Z [external-layer] req=6f84e430 done status=200 elapsed=1ms\n2026-09-12T18:02:58.6834365Z [external-layer] req=7007f4f7 model=chatgpt-web/latest stream=false\n2026-09-12T18:02:59.0836681Z [external-layer] req=7007f4f7 failed code=client_aborted elapsed=400ms\n2026-09-12T18:03:00.5929751Z [external-layer] req=44283ebd model=chatgpt-web/latest stream=false\n2026-09-12T18:03:00.5936284Z [external-layer] req=44283ebd done status=200 elapsed=1ms\n2026-09-12T18:03:00.5951689Z [external-layer] req=87f97f08 model=chatgpt-web/latest stream=false\n2026-09-12T18:03:00.9956642Z [external-layer] req=87f97f08 failed code=client_aborted elapsed=400ms\n2026-09-12T18:03:02.5040759Z [external-layer] req=ee17b599 model=chatgpt-web/latest stream=false\n2026-09-12T18:03:02.5047839Z [external-layer] req=ee17b599 done status=200 elapsed=1ms\n2026-09-12T18:03:02.5061822Z (pass) A5 a missing or unreadable control token means no admin call and a cleanly terminated request [5736.32ms]\n2026-09-12T18:03:02.5075463Z [external-layer] req=ab1cc201 model=chatgpt-web/latest stream=false\n2026-09-12T18:03:02.9079681Z [external-layer] req=ab1cc201 failed code=client_aborted elapsed=400ms\n2026-09-12T18:03:03.6300914Z [external-layer] req=d86f819d model=chatgpt-web/latest stream=false\n2026-09-12T18:03:03.6305588Z [external-layer] req=d86f819d done status=200 elapsed=1ms\n2026-09-12T18:03:03.6317662Z (pass) A6 the control token never appears in any response body, header, or error payload [1126.49ms]\n2026-09-12T18:03:03.6342166Z [external-layer] req=c140b504 model=chatgpt-web/latest stream=true\n2026-09-12T18:03:04.6347287Z [external-layer] req=c140b504 failed code=client_aborted elapsed=1000ms\n2026-09-12T18:03:05.3551298Z (pass) A7 aborting mid-stream issues exactly one interrupt, does not hang, and leaves no unhandled rejection [1723.22ms]\n2026-09-12T18:03:05.3568393Z [external-layer] req=f663d40a model=chatgpt-web/latest stream=false\n2026-09-12T18:03:05.3575919Z [external-layer] req=f663d40a done status=200 elapsed=1ms\n2026-09-12T18:03:05.3590659Z [external-layer] req=134cfb10 model=chatgpt-web/latest stream=false\n2026-09-12T18:03:05.3601205Z [external-layer] req=134cfb10 done status=200 elapsed=2ms\n2026-09-12T18:03:05.3604324Z (pass) A8 previous_response_id is forwarded upstream unchanged with the switch on and off [5.44ms]\n2026-09-12T18:03:05.3654279Z (pass) A9 /v1/models is byte-identical with abortUpstreamTurns on and off [5.00ms]\n2026-09-12T18:03:05.3671705Z [external-layer] req=3bd781fa model=chatgpt-web/latest stream=false\n2026-09-12T18:03:05.7676247Z [external-layer] req=3bd781fa failed code=client_aborted elapsed=400ms\n2026-09-12T18:03:05.7878351Z [external-layer] req=8813007b model=chatgpt-web/latest stream=false\n2026-09-12T18:03:05.7885092Z [external-layer] req=8813007b done status=200 elapsed=1ms\n2026-09-12T18:03:05.7891054Z (pass) A10 nothing mutates globalThis or a built-in, and the whole file stays inside its time budget [423.60ms]\n2026-09-12T18:03:05.7892018Z \n2026-09-12T18:03:05.7892676Z ##[endgroup]\n2026-09-12T18:03:05.7893227Z \n2026-09-12T18:03:05.7893889Z ##[group]tests/wd-bootstrap-signal.test.ts:\n2026-09-12T18:03:05.7923292Z [external-layer] req=fdc476a4 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.7929388Z [external-layer] req=fdc476a4 done status=200 elapsed=0ms\n2026-09-12T18:03:05.7932683Z (pass) A1 a non-streaming /v1/responses success carries the pre-flight payload signal [2.71ms]\n2026-09-12T18:03:05.7945307Z [external-layer] req=d3c07e38 model=chatgpt-web/high stream=true\n2026-09-12T18:03:05.8000594Z [external-layer] req=d3c07e38 done status=200 elapsed=5ms\n2026-09-12T18:03:05.8003960Z (pass) A2 a streaming success carries the same signal on the HTTP response object [6.94ms]\n2026-09-12T18:03:05.8015551Z [external-layer] req=93f051b2 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8018908Z [external-layer] req=93f051b2 done status=200 elapsed=0ms\n2026-09-12T18:03:05.8020932Z [external-layer] req=a118fd42 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8025397Z [external-layer] req=a118fd42 done status=200 elapsed=1ms\n2026-09-12T18:03:05.8027716Z (pass) A3 the signal is monotone: a much larger history reports strictly larger chars and tokens [2.51ms]\n2026-09-12T18:03:05.8039619Z [external-layer] req=41dd16b9 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8043524Z [external-layer] req=41dd16b9 done status=200 elapsed=1ms\n2026-09-12T18:03:05.8048151Z (pass) A4 the reported tokens agree with the documented ASCII estimator [2.04ms]\n2026-09-12T18:03:05.8064298Z (pass) A5 GET /v1/context publishes the cliff next to the existing fields [1.59ms]\n2026-09-12T18:03:05.8075491Z [external-layer] req=db0df9c5 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8079376Z [external-layer] req=db0df9c5 failed code=upstream_server_error elapsed=0ms\n2026-09-12T18:03:05.8081663Z [external-layer] req=f1f5210e model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8082440Z [external-layer] req=f1f5210e refused code=conversation_too_large failures=1 payloadChars=105\n2026-09-12T18:03:05.8083721Z (pass) A6 a breaker refusal still carries the payload signal [1.94ms]\n2026-09-12T18:03:05.8101854Z [external-layer] req=0fed7324 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8105251Z [external-layer] req=0fed7324 done status=200 elapsed=0ms\n2026-09-12T18:03:05.8109945Z [external-layer] req=b0950585 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8124494Z [external-layer] req=b0950585 done status=200 elapsed=2ms\n2026-09-12T18:03:05.8131378Z [external-layer] req=6e3d6cc8 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8157308Z [external-layer] req=6e3d6cc8 done status=200 elapsed=3ms\n2026-09-12T18:03:05.8159710Z [external-layer] req=cc4a06b5 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8162597Z [external-layer] req=cc4a06b5 done status=200 elapsed=1ms\n2026-09-12T18:03:05.8170209Z (pass) A7 the published cliff classifies a just-above / just-below payload [8.08ms]\n2026-09-12T18:03:05.8193425Z [external-layer] req=0f2c071e model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8196947Z [external-layer] req=0f2c071e done status=200 elapsed=0ms\n2026-09-12T18:03:05.8201365Z [external-layer] req=778139ac model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8219831Z [external-layer] req=778139ac done status=200 elapsed=2ms\n2026-09-12T18:03:05.8223716Z [external-layer] req=ed9daa47 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8241223Z [external-layer] req=ed9daa47 done status=200 elapsed=1ms\n2026-09-12T18:03:05.8245986Z [external-layer] req=324d1e83 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8266404Z [external-layer] req=324d1e83 failed code=upstream_server_error elapsed=2ms\n2026-09-12T18:03:05.8285212Z [external-layer] req=e0dfd5a8 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8298300Z [external-layer] req=e0dfd5a8 failed code=upstream_server_error elapsed=1ms\n2026-09-12T18:03:05.8310577Z [external-layer] req=00c155af model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8333390Z [external-layer] req=00c155af failed code=upstream_server_error elapsed=3ms\n2026-09-12T18:03:05.8342914Z [external-layer] req=47e28432 model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8348084Z [external-layer] req=47e28432 refused code=conversation_too_large failures=1 payloadChars=150001\n2026-09-12T18:03:05.8349629Z (pass) A8 the breaker gates on the cliff /v1/context publishes, not on a literal [18.50ms]\n2026-09-12T18:03:05.8350326Z \n2026-09-12T18:03:05.8350952Z ##[endgroup]\n2026-09-12T18:03:05.8351328Z \n2026-09-12T18:03:05.8351991Z ##[group]tests/w19-account-capabilities.test.ts:\n2026-09-12T18:03:05.8398330Z (pass) A1 /v1/context exposes account {solAvailable, proAvailable, source} read from config.json [2.88ms]\n2026-09-12T18:03:05.8416857Z (pass) A2 config.json {solAvailable:false, proAvailable:false} is reported as false/false from upstream-config [1.86ms]\n2026-09-12T18:03:05.8431754Z (pass) A3 an explicit capability overrides only its own field and marks the result source explicit [0.61ms]\n2026-09-12T18:03:05.8433604Z (pass) A4a missing fields, a missing config.json and corrupt JSON all resolve to false/false from default [0.82ms]\n2026-09-12T18:03:05.8460136Z (pass) A4b a corrupt or missing config.json leaves the HTTP surface usable and never claims explicit [2.89ms]\n2026-09-12T18:03:05.8484719Z (pass) A5 explicit {true,true} beats a config.json that says false/false [2.48ms]\n2026-09-12T18:03:05.8506796Z (pass) A6 a Pro account advertises latest plus every tier row, each with its own upstream windows [2.18ms]\n2026-09-12T18:03:05.8525896Z (pass) A7a a non-Pro Sol account advertises latest, light, medium, high — never extra-high or pro [1.85ms]\n2026-09-12T18:03:05.8543574Z (pass) A7b an explicit proAvailable:false trims the Pro tier even when config.json says true [1.79ms]\n2026-09-12T18:03:05.8561141Z (pass) A7c a config.json false/false account never advertises extra-high or pro [1.76ms]\n2026-09-12T18:03:05.8583314Z (pass) A8 a solAvailable:false account advertises luna and think, never chatgpt-web/latest [2.19ms]\n2026-09-12T18:03:05.8603418Z (pass) A9 every advertised tier row copies its context_window verbatim from the matching upstream row [1.99ms]\n2026-09-12T18:03:05.8616603Z [external-layer] req=133922de model=chatgpt-web/pro stream=false\n2026-09-12T18:03:05.8622449Z [external-layer] req=133922de done status=200 elapsed=1ms\n2026-09-12T18:03:05.8624286Z [external-layer] req=34dde8ad model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8629025Z [external-layer] req=34dde8ad done status=200 elapsed=0ms\n2026-09-12T18:03:05.8631638Z (pass) A10 a Pro account's chatgpt-web/pro and consistent high+high both reach the upstream slug [2.87ms]\n2026-09-12T18:03:05.8646127Z [external-layer] req=e70fa77b model=chatgpt-web/high stream=false\n2026-09-12T18:03:05.8647112Z [external-layer] req=e70fa77b failed code=conflicting_tier elapsed=0ms\n2026-09-12T18:03:05.8651321Z (pass) A11 model chatgpt-web/high with reasoning_effort max is rejected as conflicting_tier with no upstream turn [1.90ms]\n2026-09-12T18:03:05.8664408Z [external-layer] req=447c6bef model=chatgpt-web/pro stream=false\n2026-09-12T18:03:05.8665542Z [external-layer] req=447c6bef failed code=tier_unavailable elapsed=0ms\n2026-09-12T18:03:05.8668808Z [external-layer] req=e6b436db model=chatgpt-web/latest stream=false\n2026-09-12T18:03:05.8669958Z [external-layer] req=e6b436db failed code=tier_unavailable elapsed=0ms\n2026-09-12T18:03:05.8672144Z (pass) A12 a non-Pro account is refused chatgpt-web/pro and latest+max with tier_unavailable and no turn [2.14ms]\n2026-09-12T18:03:05.8686208Z [external-layer] req=42c2f093 model=chatgpt-web/latest stream=false\n2026-09-12T18:03:05.8687290Z [external-layer] req=42c2f093 failed code=invalid_reasoning_effort elapsed=0ms\n2026-09-12T18:03:05.8696043Z [external-layer] req=d3667cb9 model=chatgpt-web/latest stream=false\n2026-09-12T18:03:05.8700773Z [external-layer] req=d3667cb9 done status=200 elapsed=0ms\n2026-09-12T18:03:05.8708230Z (pass) A13 nonsense effort is invalid_reasoning_effort, while no effort resolves to the advertised default tier [3.08ms]\n2026-09-12T18:03:05.8725534Z (pass) A14 a non-Pro account's unified row defaults to the highest tier it can use (high), never the Pro-only xhigh [2.21ms]\n2026-09-12T18:03:05.8744381Z (pass) A15 the OpenAI data[] surface lists every advertised tier, not only the unified id [1.88ms]\n2026-09-12T18:03:05.8745056Z \n2026-09-12T18:03:05.8745546Z ##[endgroup]\n2026-09-12T18:03:05.8745753Z \n2026-09-12T18:03:05.8746181Z ##[group]tests/wb-request-surface.test.ts:\n2026-09-12T18:03:05.8777427Z (pass) A1 POST /v1/responses/compact forwards the body byte-identically and returns the upstream answer verbatim [2.37ms]\n2026-09-12T18:03:05.8799546Z (pass) A2 compaction is not idempotency-cached: the identical body is sent upstream twice [2.21ms]\n2026-09-12T18:03:05.8815325Z (pass) A3 GET /v1/responses is not a facade 404: the upstream status and body message reach the client [1.53ms]\n2026-09-12T18:03:05.8829486Z (pass) A4 POST /v1/alpha/search is forwarded and its upstream body is returned verbatim [1.43ms]\n2026-09-12T18:03:05.8844740Z (pass) A5 auth parity: each new route answers 401 without the apiKey and leaks no upstream body [1.51ms]\n2026-09-12T18:03:05.8863180Z (pass) A6 a dead upstream maps every new route to 502 upstream_unreachable [1.83ms]\n2026-09-12T18:03:05.8892608Z (pass) A7 the new routes fabricate no conversation state across repeated requests [2.95ms]\n2026-09-12T18:03:05.8893572Z \n2026-09-12T18:03:05.8894029Z ##[endgroup]\n2026-09-12T18:03:05.8894233Z \n2026-09-12T18:03:05.8894680Z ##[group]tests/w12-gap-matrix.test.ts:\n2026-09-12T18:03:05.8905831Z (pass) 1: docs/upstream-gap-audit.md exists and decides every row [0.49ms]\n2026-09-12T18:03:05.8907714Z (pass) 2: every legacy-only module is named by at least one row [0.22ms]\n2026-09-12T18:03:05.8910277Z (pass) 3: NEEDS-PORT verdicts are answered with a follow-up target and a criterion [0.21ms]\n2026-09-12T18:03:05.8914867Z 124 |   for (const line of sweepLines) {\n2026-09-12T18:03:05.8915435Z 125 |     const match = pattern.exec(line);\n2026-09-12T18:03:05.8916098Z 126 |     if (!match) throw new Error(`malformed SWEEP line: ${line}`);\n2026-09-12T18:03:05.8916958Z 127 |     const [, , identifier, sha, localPath, result, rawFile, marker] = match;\n2026-09-12T18:03:05.8917719Z 128 |     expect([\"ABSENT\", \"PRESENT\"]).toContain(result);\n2026-09-12T18:03:05.8918478Z 129 |     if (result === \"PRESENT\") expect(existsSync(localPath)).toBe(true);\n2026-09-12T18:03:05.8919414Z                                                                   ^\n2026-09-12T18:03:05.8920158Z error: expect(received).toBe(expected)\n2026-09-12T18:03:05.8920607Z \n2026-09-12T18:03:05.8920954Z Expected: true\n2026-09-12T18:03:05.8921344Z Received: false\n2026-09-12T18:03:05.8921572Z \n2026-09-12T18:03:05.8922140Z       at <anonymous> (/home/runner/work/external-layer/external-layer/tests/w12-gap-matrix.test.ts:129:61)\n2026-09-12T18:03:05.8923168Z \n2026-09-12T18:03:05.8925035Z ##[error]Expected: true\nReceived: false\n\n      at <anonymous> (/home/runner/work/external-layer/external-layer/tests/w12-gap-matrix.test.ts:129:61)\n2026-09-12T18:03:05.8927048Z (fail) 4: the sweep is reproducible — every SWEEP line has raw evidence that contains it [0.54ms]\n2026-09-12T18:03:05.8927634Z (pass) 5: the raw sweep log is real output, not a placeholder [0.33ms]\n2026-09-12T18:03:05.8928317Z (pass) 6: the headline numbers agree with the data underneath them [0.29ms]\n2026-09-12T18:03:05.8947790Z (pass) 7: the audit adds no dependency and does not touch the facade [2.56ms]\n2026-09-12T18:03:05.8948351Z \n2026-09-12T18:03:05.8948777Z ##[endgroup]\n2026-09-12T18:03:05.8948985Z \n2026-09-12T18:03:05.8949411Z ##[group]tests/w3-models.test.ts:\n2026-09-12T18:03:05.8956467Z (pass) a Sol account gets one unified latest row with five effort levels [0.14ms]\n2026-09-12T18:03:05.8957660Z (pass) a luna-only account keeps its historical rows [0.09ms]\n2026-09-12T18:03:05.8958445Z (pass) effort maps to tiers with xhigh as the default [0.08ms]\n2026-09-12T18:03:05.8959463Z (pass) an effort outside the ladder throws instead of silently dropping to the default tier [0.13ms]\n2026-09-12T18:03:05.8975534Z [external-layer] req=21c374bf model=chatgpt-web/latest stream=false\n2026-09-12T18:03:05.8981373Z [external-layer] req=21c374bf done status=200 elapsed=0ms\n2026-09-12T18:03:05.8983218Z [external-layer] req=b868bc94 model=chatgpt-web/latest stream=false\n2026-09-12T18:03:05.8984211Z [external-layer] req=b868bc94 failed code=tier_unavailable elapsed=0ms\n2026-09-12T18:03:05.8985798Z 69 |     const flat = await post({ reasoning_effort: \"low\" });\n2026-09-12T18:03:05.8986504Z 70 |     expect(flat.status).toBe(200);\n2026-09-12T18:03:05.8987187Z 71 |     expect((await flat.json() as { model?: string }).model).toBe(\"chatgpt-web/light\");\n2026-09-12T18:03:05.8987728Z 72 | \n2026-09-12T18:03:05.8988087Z 73 |     const nested = await post({ reasoning: { effort: \"max\" } });\n2026-09-12T18:03:05.8988687Z 74 |     expect(nested.status).toBe(200);\n2026-09-12T18:03:05.8989242Z                                ^\n2026-09-12T18:03:05.8989678Z error: expect(received).toBe(expected)\n2026-09-12T18:03:05.8990028Z \n2026-09-12T18:03:05.8990167Z Expected: 200\n2026-09-12T18:03:05.8990528Z Received: 400\n2026-09-12T18:03:05.8990674Z \n2026-09-12T18:03:05.8990972Z       at <anonymous> (/home/runner/work/external-layer/external-layer/tests/w3-models.test.ts:74:27)\n2026-09-12T18:03:05.8991362Z \n2026-09-12T18:03:05.8992696Z ##[error]Expected: 200\nReceived: 400\n\n      at <anonymous> (/home/runner/work/external-layer/external-layer/tests/w3-models.test.ts:74:27)\n2026-09-12T18:03:05.8995338Z (fail) the flat reasoning_effort field selects the tier, and nested reasoning.effort wins over it [2.68ms]\n2026-09-12T18:03:05.9002063Z [external-layer] req=06111a53 model=chatgpt-web/latest stream=false\n2026-09-12T18:03:05.9003223Z [external-layer] req=06111a53 failed code=invalid_reasoning_effort elapsed=0ms\n2026-09-12T18:03:05.9014031Z (pass) an unknown effort is rejected with 400 before any upstream turn is opened [1.54ms]\n2026-09-12T18:03:05.9014643Z \n2026-09-12T18:03:05.9015027Z ##[endgroup]\n2026-09-12T18:03:05.9015210Z \n2026-09-12T18:03:05.9015333Z 2 tests skipped:\n2026-09-12T18:03:05.9015798Z (skip) 3: the live stack still answers the cheap contract probes\n2026-09-12T18:03:05.9016693Z (skip) 4: a real low-tier turn reaches the browser, then the identical body replays under a second\n2026-09-12T18:03:05.9017335Z \n2026-09-12T18:03:05.9017352Z \n2026-09-12T18:03:05.9017487Z 2 tests failed:\n2026-09-12T18:03:05.9018354Z (fail) 4: the sweep is reproducible — every SWEEP line has raw evidence that contains it [0.54ms]\n2026-09-12T18:03:05.9019572Z (fail) the flat reasoning_effort field selects the tier, and nested reasoning.effort wins over it [2.68ms]\n2026-09-12T18:03:05.9020250Z \n2026-09-12T18:03:05.9020377Z  218 pass\n2026-09-12T18:03:05.9020694Z  2 skip\n2026-09-12T18:03:05.9020974Z  2 fail\n2026-09-12T18:03:05.9021271Z  1675 expect() calls\n2026-09-12T18:03:05.9021648Z Ran 222 tests across 29 files. [54.87s]\n2026-09-12T18:03:05.9046074Z ##[error]Process completed with exit code 1.\n2026-09-12T18:03:05.9091180Z ##[group]Run mkdir -p /tmp/tab-reuse-bundle/external-layer /tmp/tab-reuse-bundle/upstream-readonly\n2026-09-12T18:03:05.9091927Z \u001b[36;1mmkdir -p /tmp/tab-reuse-bundle/external-layer /tmp/tab-reuse-bundle/upstream-readonly\u001b[0m\n2026-09-12T18:03:05.9092510Z \u001b[36;1mgit archive HEAD | tar -x -C /tmp/tab-reuse-bundle/external-layer\u001b[0m\n2026-09-12T18:03:05.9093318Z \u001b[36;1mcp -a node_modules /tmp/tab-reuse-bundle/external-layer/\u001b[0m\n2026-09-12T18:03:05.9093767Z \u001b[36;1mcp \"$(command -v bun)\" /tmp/tab-reuse-bundle/bun\u001b[0m\n2026-09-12T18:03:05.9094633Z \u001b[36;1mcurl --fail --location --retry 2 https://codeload.github.com/miuuyy/codex-chatgpt-web/tar.gz/e85e369 | tar -xz --strip-components=1 -C /tmp/tab-reuse-bundle/upstream-readonly\u001b[0m\n2026-09-12T18:03:05.9095693Z \u001b[36;1mtar -czf /tmp/tab-reuse-investigation.tar.gz -C /tmp/tab-reuse-bundle .\u001b[0m\n2026-09-12T18:03:05.9131594Z shell: /usr/bin/bash -e {0}\n2026-09-12T18:03:05.9131852Z ##[endgroup]\n2026-09-12T18:03:06.0217259Z   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current\n2026-09-12T18:03:06.0218115Z                                  Dload  Upload   Total   Spent    Left  Speed\n2026-09-12T18:03:06.0218693Z \n2026-09-12T18:03:06.6074048Z   0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0\n2026-09-12T18:03:06.7817507Z 100 3372k    0 3372k    0     0  5756k      0 --:--:-- --:--:-- --:--:-- 5754k\n2026-09-12T18:03:06.7818793Z 100 12.2M    0 12.2M    0     0  16.0M      0 --:--:-- --:--:-- --:--:-- 16.0M\n2026-09-12T18:03:12.3134367Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\n2026-09-12T18:03:12.3135673Z ##[group]Run actions/upload-artifact@v4\n2026-09-12T18:03:12.3135948Z with:\n2026-09-12T18:03:12.3136166Z   name: tab-reuse-investigation\n2026-09-12T18:03:12.3136450Z   path: /tmp/tab-reuse-investigation.tar.gz\n2026-09-12T18:03:12.3136738Z   retention-days: 3\n2026-09-12T18:03:12.3136951Z   if-no-files-found: warn\n2026-09-12T18:03:12.3137179Z   compression-level: 6\n2026-09-12T18:03:12.3137391Z   overwrite: false\n2026-09-12T18:03:12.3137600Z   include-hidden-files: false\n2026-09-12T18:03:12.3137836Z ##[endgroup]\n2026-09-12T18:03:12.4799529Z (node:2443) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.\n2026-09-12T18:03:12.4801217Z (Use `node --trace-deprecation ...` to show where the warning was created)\n2026-09-12T18:03:12.4900135Z With the provided path, there will be 1 file uploaded\n2026-09-12T18:03:12.4902168Z Artifact name is valid!\n2026-09-12T18:03:12.4902695Z Root directory input is valid!\n2026-09-12T18:03:12.7528776Z Beginning upload of artifact content to blob storage\n2026-09-12T18:03:13.0357169Z (node:2443) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.\n2026-09-12T18:03:13.5171724Z Uploaded bytes 8388608\n2026-09-12T18:03:13.7153671Z Uploaded bytes 16777216\n2026-09-12T18:03:13.8253895Z Uploaded bytes 25165824\n2026-09-12T18:03:14.0545478Z Uploaded bytes 33554432\n2026-09-12T18:03:14.2109209Z Uploaded bytes 41943040\n2026-09-12T18:03:14.5149787Z Uploaded bytes 50331648\n2026-09-12T18:03:14.7395500Z Uploaded bytes 58720256\n2026-09-12T18:03:14.7975906Z Uploaded bytes 60834650\n2026-09-12T18:03:14.8713497Z Finished uploading artifact content to blob storage!\n2026-09-12T18:03:14.8717577Z SHA256 digest of uploaded artifact zip is dd284bcd54510f1c167517542c8a0500197d8b1e24b584632cb5b1cba0c95c00\n2026-09-12T18:03:14.8719707Z Finalizing artifact upload\n2026-09-12T18:03:15.0831149Z Artifact tab-reuse-investigation.zip successfully finalized. Artifact ID 10303051180\n2026-09-12T18:03:15.0833116Z Artifact tab-reuse-investigation has been successfully uploaded! Final size is 60834650 bytes. Artifact ID is 10303051180\n2026-09-12T18:03:15.0841612Z Artifact download URL: https://github.com/daixudk96-max/external-layer/actions/runs/34709964374/artifacts/10303051180\n2026-09-12T18:03:15.0998028Z ##[group]Run test \"$TYPECHECK\" = success && test \"$TESTS\" = success\n2026-09-12T18:03:15.0998537Z \u001b[36;1mtest \"$TYPECHECK\" = success && test \"$TESTS\" = success\u001b[0m\n2026-09-12T18:03:15.1035417Z shell: /usr/bin/bash -e {0}\n2026-09-12T18:03:15.1035722Z env:\n2026-09-12T18:03:15.1035962Z   TYPECHECK: success\n2026-09-12T18:03:15.1036210Z   TESTS: failure\n2026-09-12T18:03:15.1036441Z ##[endgroup]\n2026-09-12T18:03:15.1096242Z ##[error]Process completed with exit code 1.\n2026-09-12T18:03:15.1194843Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\n2026-09-12T18:03:15.1196256Z Post job cleanup.\n2026-09-12T18:03:15.2073616Z [command]/usr/bin/git version\n2026-09-12T18:03:15.2119798Z git version 2.55.0\n2026-09-12T18:03:15.2164501Z Temporarily overriding HOME='/home/runner/work/_temp/2488a0f3-5c3e-49e2-9c46-c14b34800b6a' before making global git config changes\n2026-09-12T18:03:15.2166326Z Adding repository directory to the temporary git global config as a safe directory\n2026-09-12T18:03:15.2170336Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/external-layer/external-layer\n2026-09-12T18:03:15.2209114Z [command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n2026-09-12T18:03:15.2244699Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n2026-09-12T18:03:15.2499586Z [command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n2026-09-12T18:03:15.2535861Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n2026-09-12T18:03:15.2789141Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n2026-09-12T18:03:15.2825240Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n2026-09-12T18:03:15.3232033Z Cleaning up orphan processes\n2026-09-12T18:03:15.3574357Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\n"
+  }
+]
