@@ -26,7 +26,7 @@ function defaultSleep(ms: number): Promise<void> {
 }
 
 /** 从任意抛出物中抽取可读文本（message 可能是 string / Error / 嵌套对象）。 */
-function errorText(error: unknown): string {
+export function errorText(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
   if (error !== null && typeof error === "object") {
@@ -59,6 +59,39 @@ export function isTransientError(message: string): boolean {
   return TRANSIENT_ERROR_PATTERNS.some((pattern) => haystack.includes(pattern));
 }
 
+/**
+ * 导航/传输层错误族（W25）：回合死于 page.goto 等网络闪断。这类失败发生在第 0 秒——
+ * 提示词还没贴、模型一个 token 都没花——重试近乎免费，因此拿到独立于瞬时错误族的预算。
+ *
+ * 刻意不含 net::ERR_ABORTED：那个签名是浏览器被登录墙拦截（chatgpt.com 跳认证页被
+ * launcher 挡下），重试只会对着一个持久状态空烧预算，必须原样透传给客户端。
+ */
+const NAVIGATION_ERROR_PATTERNS: readonly string[] = [
+  "net::err_connection_closed",
+  "net::err_connection_reset",
+  "net::err_connection_refused",
+  "net::err_timed_out",
+  "net::err_internet_disconnected",
+  "net::err_network_changed",
+  "net::err_name_not_resolved",
+  "net::err_address_unreachable",
+];
+
+/** 判定一条错误消息是否属于导航/传输层错误族（大小写不敏感的子串匹配）。 */
+export function isNavigationError(message: string): boolean {
+  if (typeof message !== "string" || message.length === 0) return false;
+  const haystack = message.toLowerCase();
+  return NAVIGATION_ERROR_PATTERNS.some((pattern) => haystack.includes(pattern));
+}
+
+/** 返回命中的导航错误模式（用于日志 family 字段）；未命中返回 null。 */
+export function navigationErrorPattern(message: string): string | null {
+  if (typeof message !== "string" || message.length === 0) return null;
+  const haystack = message.toLowerCase();
+  const hit = NAVIGATION_ERROR_PATTERNS.find((pattern) => haystack.includes(pattern));
+  return hit ?? null;
+}
+
 export interface TransientRetryOptions {
   /** 总尝试次数（>=1）；attempt 从 1 开始计数。 */
   limit: number;
@@ -68,6 +101,9 @@ export interface TransientRetryOptions {
   onRetry?: (attempt: number, message: string, error?: unknown) => void;
   /** 额外的可重试判定：返回 true 即视为可重试（与瞬时错误族取并集）。 */
   isRetryable?: (error: unknown) => boolean;
+  /** W25：置 true 时忽略内置瞬时错误族，仅按 isRetryable 判定。外层导航预算专用——
+   * 否则穿过内层的瞬时错误（"Something went wrong" 等）会被外层再乘一遍。 */
+  ignoreTransientPatterns?: boolean;
 }
 
 /**
@@ -89,7 +125,8 @@ export async function withTransientRetry<T>(
     } catch (error) {
       lastError = error;
       const message = errorText(error);
-      const retryable = isTransientError(message) || options.isRetryable?.(error) === true;
+      const retryable = (options.ignoreTransientPatterns ? false : isTransientError(message))
+        || options.isRetryable?.(error) === true;
       const exhausted = attempt >= limit;
       if (!retryable || exhausted) {
         // 非瞬时错误立即抛出；预算耗尽抛出最后一次错误（绝不伪造成功）。

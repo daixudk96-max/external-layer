@@ -26,6 +26,10 @@ const firstByteTimeoutMs = process.env.EXT_LAYER_FIRST_BYTE_MS !== undefined
 const progressTimeoutMs = process.env.EXT_LAYER_PROGRESS_MS !== undefined
   ? Number(process.env.EXT_LAYER_PROGRESS_MS)
   : undefined;
+// W25: outer retry budget for navigation-stage failures (page.goto transport blips).
+const navigationRetryLimit = process.env.EXT_LAYER_NAV_RETRIES !== undefined
+  ? Number(process.env.EXT_LAYER_NAV_RETRIES)
+  : undefined;
 
 // The trusted Codex environment handed to upstream for envelope-less standard clients.
 // Defaults to the working directory the layer was started from, never to an author path.
@@ -88,6 +92,9 @@ const layer = await startExternalLayer({
   stallTimeoutSec,
   firstByteTimeoutMs,
   progressTimeoutMs,
+  ...(navigationRetryLimit !== undefined && Number.isFinite(navigationRetryLimit)
+    ? { navigationRetryLimit }
+    : {}),
   upstreamHome,
   ...(continuation !== undefined ? { continuation } : {}),
   ...(conversationLimit !== undefined ? { conversationLimit } : {}),

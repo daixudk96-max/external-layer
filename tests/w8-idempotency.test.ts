@@ -146,7 +146,11 @@ test("a failed turn is never stored as a replayable success", async () => {
       if (failing) {
         return Response.json({ error: { message: "ChatGPT ended the turn with 'Something went wrong'. Retry the turn." } }, { status: 502 });
       }
-      return fetch(up.url, { method: req.method, headers: req.headers, body: await req.text() });
+      // Preserve the path when proxying: the facade fires a fire-and-forget
+      // POST /admin/interrupt-turn after a failed turn (W22), and a path-dropping
+      // proxy would land it on "/" where `up` counts it as a turn — the source of
+      // this test's historic flake.
+      return fetch(up.url + new URL(req.url).pathname, { method: req.method, headers: req.headers, body: await req.text() });
     },
   });
   const layer = await startExternalLayer({ apiKey: KEY, upstreamBaseUrl: `http://127.0.0.1:${flaky.port}`, tokenProvider: async () => "tok", port: 0, transientRetryLimit: 1, retrySleepMs: 1 });

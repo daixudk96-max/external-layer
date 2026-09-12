@@ -20,7 +20,14 @@ import {
   unifiedCatalog,
   UnknownEffortError,
 } from "./models";
-import { classifyEmptyCompletion, isTransientError, withTransientRetry } from "./reliability";
+import {
+  classifyEmptyCompletion,
+  errorText,
+  isNavigationError,
+  isTransientError,
+  navigationErrorPattern,
+  withTransientRetry,
+} from "./reliability";
 import { resolveProgressTimeoutMs, resolveStallTimeoutSec, UpstreamStallError } from "./stall-timeout";
 import { resolveToolTimeouts, type ToolTimeoutsConfig } from "./tool-timeouts";
 import {
@@ -55,10 +62,13 @@ export interface ExternalLayerConfig {
   /** Trusted Codex environment synthesized for envelope-less standard clients (the upstream
    * requires a cwd-bearing `<environment_context>` user message bound to the turn identity). */
   defaultEnvironment?: DefaultEnvironmentConfig;
-  /** 重试上限（缺省 5；0 = 关闭重试）。 */
+  /** 重试上限（生成阶段；缺省 1 = 交客户端重试；0/负数同 1）。 */
   transientRetryLimit?: number;
   /** 重试等待时间毫秒（测试注入；缺省走 2000*attempt 退避）。 */
   retrySleepMs?: number;
+  /** 导航阶段（page.goto 网络闪断，回合第 0 秒即死、零成本）的独立重试预算；缺省 2，0 = 关闭。
+   * 与 transientRetryLimit 互相独立：瞬时族不占导航预算，导航失败不占瞬时预算。 */
+  navigationRetryLimit?: number;
   /** 幂等状态 JSON 文件；缺省 = 仅内存 */
   statePath?: string;
   /** 幂等回放 TTL 毫秒；缺省 600000；0 = 关闭回放 */
@@ -696,6 +706,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
     config.transientRetryLimit > 0
       ? Math.floor(config.transientRetryLimit)
       : 1;
+  // W25: navigation blips get their own budget (default 2 retries → 3 attempts);
+  // 0 (or negative) disables the outer retry entirely.
+  const effectiveNavigationRetryLimit =
+    typeof config.navigationRetryLimit === "number" && Number.isFinite(config.navigationRetryLimit)
+      ? Math.max(0, Math.floor(config.navigationRetryLimit))
+      : 2;
 
   if (!process.env.NO_PROXY && (process.env.HTTP_PROXY || process.env.HTTPS_PROXY)) {
     process.env.NO_PROXY = "127.0.0.1,localhost";
@@ -812,8 +828,13 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
         // A failed turn still belongs to its conversation: binding it lets an identical client
         // retry resolve to the SAME thread, so the breaker's counter accumulates across retries
         // (and a successful retry re-enters normal continuation).
-        const noteTurnFailure = () => {
-          failureBreaker.recordFailure(resolvedThreadId, payloadChars);
+        const noteTurnFailure = (message?: string) => {
+          // A navigation blip is a network event, not a payload problem: counting it would let
+          // a flaky exit trip `conversation_too_large`. The conversation is still bound so the
+          // client's own retry continues the same thread.
+          if (message === undefined || !isNavigationError(errorText(message))) {
+            failureBreaker.recordFailure(resolvedThreadId, payloadChars);
+          }
           if (continuationEnabled && Array.isArray(standard.input)) {
             conversationRegistry.recordTurn(resolvedThreadId, normalizedInputItems);
           }
@@ -979,6 +1000,32 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               }
             }
           : undefined;
+
+        // W25: navigation-stage failures (transport blips at page.goto — the turn dies at
+        // second zero with no prompt attached and zero tokens spent) retry on their OWN outer
+        // budget. Retrying a blip is nearly free; retrying a mid-generation failure is not,
+        // which is why the transient budget above stays at its default single attempt. The
+        // inner budget explicitly skips nav-class errors so the two budgets never multiply.
+        const withNavigationRetry = async <T>(task: () => Promise<T>): Promise<T> => {
+          if (effectiveNavigationRetryLimit <= 0) return task();
+          return withTransientRetry(task, {
+            limit: effectiveNavigationRetryLimit + 1,
+            sleep: retrySleep,
+            // The outer budget must judge ONLY nav-class errors: the built-in transient
+            // matching would re-replay generation-stage failures ("Something went wrong")
+            // that already exhausted the inner budget — the multiplication A3 guards against.
+            ignoreTransientPatterns: true,
+            isRetryable: (error: unknown) => {
+              if (error instanceof ClientAbortedError) return false;
+              return error instanceof UpstreamHttpFailure && isNavigationError(errorText(error.body));
+            },
+            onRetry: (attempt: number, message: string) => {
+              console.warn(
+                `[external-layer] nav retry attempt ${attempt}/${effectiveNavigationRetryLimit + 1} family=${navigationErrorPattern(message) ?? "net::"}`,
+              );
+            },
+          });
+        };
         const abortUpstreamTurns = config.abortUpstreamTurns !== false;
         let currentTurnIdentity: { threadId: string; turnId: string } | null = null;
         let turnCompleted = false;
@@ -1019,7 +1066,8 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
 
           let turnResult: UpstreamStreamResult;
           try {
-            turnResult = await withTransientRetry<UpstreamStreamResult>(
+            turnResult = await withNavigationRetry(async () =>
+              withTransientRetry<UpstreamStreamResult>(
               async (_attempt) => {
                 if (abortUpstreamTurns && req.signal.aborted) {
                   triggerInterrupt().catch(() => {});
@@ -1118,6 +1166,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                     return true;
                   }
                   if (error instanceof UpstreamHttpFailure) {
+                    // Navigation blips belong to the OUTER nav budget (withNavigationRetry);
+                    // the transient budget must never multiply them.
+                    if (isNavigationError(errorText(error.body))) return false;
                     return error.status >= 500 || isTransientError(error.body);
                   }
                   if (error instanceof EmptyTurnError) {
@@ -1143,6 +1194,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   console.warn(`[external-layer] transient retry attempt ${attempt}/${retryLimit} family=${family}`);
                 },
               },
+              ),
             );
           } catch (error) {
             if (error instanceof ClientAbortedError || (abortUpstreamTurns && req.signal.aborted)) {
@@ -1219,7 +1271,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               errCode = `upstream_${turnResult.status}`;
             }
             logFailed(errCode);
-            noteTurnFailure();
+            noteTurnFailure(turnResult.bodyText);
             return new Response(turnResult.bodyText, {
               status: turnResult.status,
               headers: {
@@ -1346,7 +1398,8 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
         // 非流式请求
         const executeTurn = async () => {
           try {
-            const response = await withTransientRetry(
+            const response = await withNavigationRetry(() =>
+              withTransientRetry(
               async (_attempt) => {
                 if (abortUpstreamTurns && req.signal.aborted) {
                   triggerInterrupt().catch(() => {});
@@ -1460,6 +1513,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                     return true;
                   }
                   if (error instanceof UpstreamHttpFailure) {
+                    // Navigation blips belong to the OUTER nav budget (withNavigationRetry);
+                    // the transient budget must never multiply them.
+                    if (isNavigationError(errorText(error.body))) return false;
                     return error.status >= 500 || isTransientError(error.body);
                   }
                   if (error instanceof EmptyTurnError) {
@@ -1485,6 +1541,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   console.warn(`[external-layer] transient retry attempt ${attempt}/${retryLimit} family=${family}`);
                 },
               },
+              ),
             );
             return response;
           } catch (error) {
@@ -1597,7 +1654,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             errCode = `upstream_${result.status}`;
           }
           logFailed(errCode);
-          noteTurnFailure();
+          noteTurnFailure(result.body);
         }
 
         if (isChatCompletions && result.status === 200) {
