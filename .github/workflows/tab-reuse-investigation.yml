@@ -1,0 +1,52 @@
+name: Tab reuse investigation
+on:
+  push:
+    branches: [fix/tab-reuse-investigation-20260913]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install development tools without changing manifests
+        run: npm install --no-save --package-lock=false typescript
+      - name: Record tool versions
+        run: |
+          mkdir -p /tmp/tab-reuse-bundle
+          { git rev-parse HEAD; bun --version; node --version; ./node_modules/.bin/tsc --version; } | tee /tmp/tab-reuse-bundle/versions.txt
+      - name: Typecheck unchanged source
+        id: typecheck
+        continue-on-error: true
+        run: set -o pipefail; bunx tsc --noEmit 2>&1 | tee /tmp/tab-reuse-bundle/typecheck-baseline.log
+      - name: Run unchanged tests
+        id: tests
+        continue-on-error: true
+        run: set -o pipefail; bun test 2>&1 | tee /tmp/tab-reuse-bundle/tests-baseline.log
+      - name: Package source and development runtime for offline investigation
+        if: always()
+        run: |
+          mkdir -p /tmp/tab-reuse-bundle/external-layer /tmp/tab-reuse-bundle/upstream-readonly
+          git archive HEAD | tar -x -C /tmp/tab-reuse-bundle/external-layer
+          cp -a node_modules /tmp/tab-reuse-bundle/external-layer/
+          cp "$(command -v bun)" /tmp/tab-reuse-bundle/bun
+          curl --fail --location --retry 2 https://codeload.github.com/miuuyy/codex-chatgpt-web/tar.gz/e85e369 | tar -xz --strip-components=1 -C /tmp/tab-reuse-bundle/upstream-readonly
+          tar -czf /tmp/tab-reuse-investigation.tar.gz -C /tmp/tab-reuse-bundle .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tab-reuse-investigation
+          path: /tmp/tab-reuse-investigation.tar.gz
+          retention-days: 3
+      - name: Enforce both baseline gates
+        if: always()
+        env:
+          TYPECHECK: ${{ steps.typecheck.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+        run: test "$TYPECHECK" = success && test "$TESTS" = success
