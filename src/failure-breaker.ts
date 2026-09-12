@@ -42,6 +42,13 @@ export interface BreakerVerdict {
 export interface FailureBreaker {
   check(threadId: string, payloadChars: number): BreakerVerdict;
   recordFailure(threadId: string, payloadChars: number): void;
+  /**
+   * W27: one qualifying big-payload failure is already enough evidence that this conversation
+   * cannot pass the page as-is, so the NEXT oversized request should be nudged (a synthetic
+   * completed response telling the agent to compact / start a new conversation) instead of
+   * burning another doomed upstream turn. Never true below the payload threshold.
+   */
+  shouldNudge(threadId: string, payloadChars: number): { nudge: boolean; failures: number; estimatedTokens: number };
   recordSuccess(threadId: string): void;
 }
 
@@ -85,6 +92,7 @@ export function createFailureBreaker(rawConfig: FailureBreakerConfig = {}): Fail
   if (rawConfig.enabled === false) {
     return {
       check: () => ({ blocked: false, failures: 0, estimatedTokens: 0 }),
+      shouldNudge: () => ({ nudge: false, failures: 0, estimatedTokens: 0 }),
       recordFailure: () => undefined,
       recordSuccess: () => undefined,
     };
@@ -96,6 +104,14 @@ export function createFailureBreaker(rawConfig: FailureBreakerConfig = {}): Fail
       const blocked = state.openedAt !== null && now() - state.openedAt < cooldownMs;
       return {
         blocked,
+        failures: state.failures,
+        estimatedTokens: estimateTokensFromChars(payloadChars),
+      };
+    },
+    shouldNudge(threadId, payloadChars) {
+      const state = stateOf(threadId);
+      return {
+        nudge: state.failures >= 1 && payloadChars >= payloadCharsThreshold,
         failures: state.failures,
         estimatedTokens: estimateTokensFromChars(payloadChars),
       };

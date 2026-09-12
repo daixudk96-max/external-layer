@@ -133,16 +133,61 @@ async function turn(baseUrl: string, input: unknown[], extra: Record<string, unk
   };
 }
 
+// AMENDED 2026-09-12 (w27-compact-nudge): on /v1/responses the breaker now intercepts after ONE
+// qualifying failure with a synthetic completed reminder (w27), so a 429 can no longer be reached
+// by repeated big Responses turns. The 429 trip/cooldown/half-open mechanics remain real on the
+// chat/completions surface (the nudge is Responses-only) — chatTurn drives that surface.
+async function chatTurn(baseUrl: string, content: string, extra: Record<string, unknown> = {}) {
+  const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({ model: "chatgpt-web/high", messages: [{ role: "user", content }], stream: false, ...extra }),
+  });
+  const body = (await res.json()) as { error?: { type?: string; code?: string; message?: string } };
+  return {
+    status: res.status,
+    conversation: res.headers.get("x-ext-layer-conversation"),
+    errorType: body.error?.type,
+    errorCode: body.error?.code,
+    message: body.error?.message ?? "",
+    body,
+  };
+}
+
+// AMENDED 2026-09-12 (w27-compact-nudge): drives the chat surface with an APPENDING history —
+// same conversation thread (history-prefix match) with a distinct body per turn, so the chat
+// idempotency store never replays an earlier success.
+async function chatTurnMsgs(baseUrl: string, messages: Array<{ role: string; content: string }>, extra: Record<string, unknown> = {}) {
+  const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({ model: "chatgpt-web/high", messages, stream: false, ...extra }),
+  });
+  const body = (await res.json()) as { error?: { type?: string; code?: string; message?: string } };
+  return {
+    status: res.status,
+    conversation: res.headers.get("x-ext-layer-conversation"),
+    errorType: body.error?.type,
+    errorCode: body.error?.code,
+    message: body.error?.message ?? "",
+    body,
+  };
+}
+
 test("A1 three consecutive big-payload failures trip the breaker and the next request is refused instantly", async () => {
+  // AMENDED 2026-09-12 (w27-compact-nudge): on /v1/responses the breaker now nudges after ONE
+  // qualifying failure (w27 A1), so three Responses failures can no longer accumulate. The 429
+  // trip stays lockable on the chat/completions surface, which the nudge deliberately does not
+  // cover (different response shape — a chat client gets the plain OpenAI error).
   const up = mockUpstream({ failures: 99 });
   const layer = await boot(up.baseUrl);
   try {
     for (let i = 0; i < 3; i += 1) {
-      const r = await turn(layer.baseUrl, bigConv("A1"));
+      const r = await chatTurn(layer.baseUrl, BIG + "A1");
       expect(r.status).toBe(500);
     }
     expect(up.calls.length).toBe(3);
-    const refused = await turn(layer.baseUrl, bigConv("A1"));
+    const refused = await chatTurn(layer.baseUrl, BIG + "A1");
     expect(refused.status).toBe(429);
     expect(refused.errorType).toBe("rate_limit_error");
     expect(refused.errorCode).toBe("conversation_too_large");
@@ -157,6 +202,9 @@ test("A1 three consecutive big-payload failures trip the breaker and the next re
 }, 20000);
 
 test("A2 a failed turn still binds its conversation so an identical retry resolves to the same thread", async () => {
+  // AMENDED 2026-09-12 (w27-compact-nudge): the identical retry now receives the synthetic nudge
+  // instead of another upstream turn; binding is still proven by the retry carrying the SAME
+  // conversation header as the failed turn.
   const up = mockUpstream({ failures: 1 });
   const layer = await boot(up.baseUrl);
   try {
@@ -165,8 +213,7 @@ test("A2 a failed turn still binds its conversation so an identical retry resolv
     expect(first.conversation).toBe(up.calls[0]!.thread);
     const retry = await turn(layer.baseUrl, bigConv("A2"));
     expect(retry.status).toBe(200);
-    expect(up.calls.length).toBe(2);
-    expect(up.calls[1]!.thread).toBe(up.calls[0]!.thread);
+    expect(up.calls.length).toBe(1);
     expect(retry.conversation).toBe(first.conversation);
   } finally {
     await layer.stop();
@@ -192,21 +239,27 @@ test("A3 small-payload failures never trip the breaker", async () => {
 }, 20000);
 
 test("A4 a success resets the consecutive counter", async () => {
+  // AMENDED 2026-09-12 (w27-compact-nudge), second revision: on /v1/responses a nudged
+  // conversation cannot reach the upstream at all, and a "small" request would be a DIFFERENT
+  // conversation (the registry matches history prefixes), so the first revision's small success
+  // reset the wrong thread. Prove the reset on the chat surface with an APPENDING conversation:
+  // one successful turn clears the counter and the breaker then needs three FRESH failures
+  // before refusing (without the reset the 429 would appear one turn earlier).
   const up = mockUpstream({ failures: 2 });
   const layer = await boot(up.baseUrl);
   try {
-    expect((await turn(layer.baseUrl, bigConv("A4"))).status).toBe(500);
-    expect((await turn(layer.baseUrl, bigConv("A4"))).status).toBe(500);
-    expect((await turn(layer.baseUrl, bigConv("A4"))).status).toBe(200);
+    const base = [{ role: "user", content: BIG + "A4" }];
+    expect((await chatTurnMsgs(layer.baseUrl, base)).status).toBe(500);
+    expect((await chatTurnMsgs(layer.baseUrl, [...base, { role: "user", content: "continue" }])).status).toBe(500);
+    const ok = await chatTurnMsgs(layer.baseUrl, [...base, { role: "user", content: "continue" }, { role: "user", content: "again" }]);
+    expect(ok.status).toBe(200);
     up.setFailures(99);
-    expect((await turn(layer.baseUrl, bigConv("A4"))).status).toBe(500);
-    expect((await turn(layer.baseUrl, bigConv("A4"))).status).toBe(500);
-    const sixth = await turn(layer.baseUrl, bigConv("A4"));
-    expect(sixth.status).toBe(500);
-    expect(up.calls.length).toBe(6);
-    const seventh = await turn(layer.baseUrl, bigConv("A4"));
-    expect(seventh.status).toBe(429);
-    expect(seventh.errorCode).toBe("conversation_too_large");
+    expect((await chatTurnMsgs(layer.baseUrl, [...base, { role: "user", content: "continue" }, { role: "user", content: "again" }, { role: "user", content: "more" }])).status).toBe(500);
+    expect((await chatTurnMsgs(layer.baseUrl, [...base, { role: "user", content: "continue" }, { role: "user", content: "again" }, { role: "user", content: "more" }, { role: "user", content: "more2" }])).status).toBe(500);
+    expect((await chatTurnMsgs(layer.baseUrl, [...base, { role: "user", content: "continue" }, { role: "user", content: "again" }, { role: "user", content: "more" }, { role: "user", content: "more2" }, { role: "user", content: "more3" }])).status).toBe(500);
+    const refused = await chatTurnMsgs(layer.baseUrl, [...base, { role: "user", content: "continue" }, { role: "user", content: "again" }, { role: "user", content: "more" }, { role: "user", content: "more2" }, { role: "user", content: "more3" }, { role: "user", content: "more4" }]);
+    expect(refused.status).toBe(429);
+    expect(refused.errorCode).toBe("conversation_too_large");
     expect(up.calls.length).toBe(6);
   } finally {
     await layer.stop();
@@ -215,17 +268,18 @@ test("A4 a success resets the consecutive counter", async () => {
 }, 20000);
 
 test("A5 after the cooldown the breaker is half-open: one attempt is allowed and a failure re-opens it", async () => {
+  // AMENDED 2026-09-12 (w27-compact-nudge): moved to the chat surface — see the chatTurn note.
   let clock = 1_000_000;
   const up = mockUpstream({ failures: 99 });
   const layer = await boot(up.baseUrl, { failureBreaker: { cooldownMs: 5_000, now: () => clock } });
   try {
-    for (let i = 0; i < 3; i += 1) await turn(layer.baseUrl, bigConv("A5"));
-    expect((await turn(layer.baseUrl, bigConv("A5"))).status).toBe(429);
+    for (let i = 0; i < 3; i += 1) await chatTurn(layer.baseUrl, BIG + "A5");
+    expect((await chatTurn(layer.baseUrl, BIG + "A5")).status).toBe(429);
     clock += 6_000;
-    const halfOpen = await turn(layer.baseUrl, bigConv("A5"));
+    const halfOpen = await chatTurn(layer.baseUrl, BIG + "A5");
     expect(halfOpen.status).toBe(500);
     expect(up.calls.length).toBe(4);
-    const reRefused = await turn(layer.baseUrl, bigConv("A5"));
+    const reRefused = await chatTurn(layer.baseUrl, BIG + "A5");
     expect(reRefused.status).toBe(429);
     expect(up.calls.length).toBe(4);
   } finally {
@@ -235,16 +289,20 @@ test("A5 after the cooldown the breaker is half-open: one attempt is allowed and
 }, 20000);
 
 test("A6 after the cooldown a successful attempt closes the breaker", async () => {
+  // AMENDED 2026-09-12 (w27-compact-nudge): moved to the chat surface — see the chatTurn note.
   let clock = 1_000_000;
   const up = mockUpstream({ failures: 3 });
   const layer = await boot(up.baseUrl, { failureBreaker: { cooldownMs: 5_000, now: () => clock } });
   try {
-    for (let i = 0; i < 3; i += 1) await turn(layer.baseUrl, bigConv("A6"));
-    expect((await turn(layer.baseUrl, bigConv("A6"))).status).toBe(429);
+    for (let i = 0; i < 3; i += 1) await chatTurn(layer.baseUrl, BIG + "A6");
+    expect((await chatTurn(layer.baseUrl, BIG + "A6")).status).toBe(429);
     clock += 6_000;
-    const halfOpen = await turn(layer.baseUrl, bigConv("A6"));
+    const halfOpen = await chatTurn(layer.baseUrl, BIG + "A6");
     expect(halfOpen.status).toBe(200);
-    const next = await turn(layer.baseUrl, bigConv("A6"));
+    // The closing attempt is a history-EXTENDING body: same thread (prefix match), different
+    // idempotency key — the chat surface always checks the store, and the half-open success was
+    // cached under the original body's key.
+    const next = await chatTurnMsgs(layer.baseUrl, [{ role: "user", content: BIG + "A6" }, { role: "user", content: "go on" }]);
     expect(next.status).toBe(200);
     expect(up.calls.length).toBe(5);
   } finally {
@@ -254,12 +312,13 @@ test("A6 after the cooldown a successful attempt closes the breaker", async () =
 }, 20000);
 
 test("A7 conversations are isolated: a tripped conversation never blocks another one", async () => {
+  // AMENDED 2026-09-12 (w27-compact-nudge): moved to the chat surface — see the chatTurn note.
   const up = mockUpstream({ failures: 99 });
   const layer = await boot(up.baseUrl);
   try {
-    for (let i = 0; i < 3; i += 1) await turn(layer.baseUrl, bigConv("A7-a"));
-    expect((await turn(layer.baseUrl, bigConv("A7-a"))).status).toBe(429);
-    const other = await turn(layer.baseUrl, bigConv("A7-b"));
+    for (let i = 0; i < 3; i += 1) await chatTurn(layer.baseUrl, BIG + "A7-a");
+    expect((await chatTurn(layer.baseUrl, BIG + "A7-a")).status).toBe(429);
+    const other = await chatTurn(layer.baseUrl, BIG + "A7-b");
     expect(other.status).toBe(500);
     expect(up.calls.length).toBe(4);
   } finally {
@@ -269,14 +328,16 @@ test("A7 conversations are isolated: a tripped conversation never blocks another
 }, 20000);
 
 test("A8 a streaming request is refused with plain JSON 429, not an SSE stream", async () => {
+  // AMENDED 2026-09-12 (w27-compact-nudge): moved to the chat surface — a streaming /v1/responses
+  // request is now answered with the synthetic nudge SSE stream (w27 A2), not a 429.
   const up = mockUpstream({ failures: 99 });
   const layer = await boot(up.baseUrl);
   try {
-    for (let i = 0; i < 3; i += 1) await turn(layer.baseUrl, bigConv("A8"));
-    const res = await fetch(`${layer.baseUrl}/v1/responses`, {
+    for (let i = 0; i < 3; i += 1) await chatTurn(layer.baseUrl, BIG + "A8");
+    const res = await fetch(`${layer.baseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: { authorization: `Bearer ${KEY}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: "chatgpt-web/high", input: bigConv("A8"), stream: true }),
+      body: JSON.stringify({ model: "chatgpt-web/high", messages: [{ role: "user", content: BIG + "A8" }], stream: true }),
     });
     expect(res.status).toBe(429);
     expect((res.headers.get("content-type") ?? "").includes("json")).toBe(true);

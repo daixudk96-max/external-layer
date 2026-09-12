@@ -830,6 +830,96 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             },
           );
         }
+        // W27 nudge: after ONE qualifying big-payload failure, the next oversized request on the
+        // same conversation gets a synthetic COMPLETED response telling the agent to compact or
+        // start a new conversation — the agent can act on it (its own compaction tool), which a
+        // 429 never lets it do. No upstream turn is opened, nothing is recorded as a breaker
+        // success/failure, and nothing enters the idempotency store. Responses surface only:
+        // a chat/completions client keeps the W24 429 refusal (different response shape).
+        const nudgeVerdict = failureBreaker.shouldNudge(resolvedThreadId, payloadChars);
+        if (nudgeVerdict.nudge && !isChatCompletions) {
+          console.warn(
+            `[external-layer] req=${reqId} nudge code=conversation_too_large failures=${nudgeVerdict.failures} payloadChars=${payloadChars}`,
+          );
+          const nudgeText =
+            `Conversation too large for the ChatGPT Web transport: ~${nudgeVerdict.estimatedTokens} tokens estimated from ${payloadChars} chars, ` +
+            `and the previous attempt at this size already failed. Compact this conversation now (call your compaction tool) or start a new conversation before continuing.`;
+          const responseId = `resp_${randomUUID().replace(/-/g, "")}`;
+          const messageId = `msg_${randomUUID().replace(/-/g, "")}`;
+          const modelEcho =
+            typeof standard.model === "string" && standard.model ? standard.model : "chatgpt-web/latest";
+          const outputText = { type: "output_text", text: nudgeText, annotations: [] };
+          const messageItem = {
+            type: "message",
+            id: messageId,
+            role: "assistant",
+            status: "completed",
+            content: [outputText],
+          };
+          const synthetic = {
+            id: responseId,
+            object: "response",
+            created_at: Math.floor(Date.now() / 1000),
+            status: "completed",
+            model: modelEcho,
+            output: [messageItem],
+            usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+          };
+          const nudgeHeaders: Record<string, string> = {
+            "x-ext-layer-conversation": resolvedThreadId,
+            "x-ext-layer-nudge": "conversation_too_large",
+          };
+          if (isStreaming) {
+            const frame = (event: string, payload: unknown) => `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+            const emptyPart = { type: "output_text", text: "", annotations: [] };
+            const body =
+              frame("response.created", { type: "response.created", response: { ...synthetic, output: [] } }) +
+              frame("response.output_item.added", {
+                type: "response.output_item.added",
+                output_index: 0,
+                item: { ...messageItem, content: [emptyPart] },
+              }) +
+              frame("response.content_part.added", {
+                type: "response.content_part.added",
+                item_id: messageId,
+                output_index: 0,
+                content_index: 0,
+                part: emptyPart,
+              }) +
+              frame("response.output_text.delta", {
+                type: "response.output_text.delta",
+                item_id: messageId,
+                output_index: 0,
+                content_index: 0,
+                delta: nudgeText,
+              }) +
+              frame("response.output_text.done", {
+                type: "response.output_text.done",
+                item_id: messageId,
+                output_index: 0,
+                content_index: 0,
+                text: nudgeText,
+              }) +
+              frame("response.content_part.done", {
+                type: "response.content_part.done",
+                item_id: messageId,
+                output_index: 0,
+                content_index: 0,
+                part: outputText,
+              }) +
+              frame("response.output_item.done", { type: "response.output_item.done", output_index: 0, item: messageItem }) +
+              frame("response.completed", { type: "response.completed", response: synthetic }) +
+              "data: [DONE]\n\n";
+            return new Response(body, {
+              status: 200,
+              headers: { ...nudgeHeaders, "content-type": "text/event-stream" },
+            });
+          }
+          return new Response(JSON.stringify(synthetic), {
+            status: 200,
+            headers: { ...nudgeHeaders, "content-type": "application/json" },
+          });
+        }
         // A failed turn still belongs to its conversation: binding it lets an identical client
         // retry resolve to the SAME thread, so the breaker's counter accumulates across retries
         // (and a successful retry re-enters normal continuation).
