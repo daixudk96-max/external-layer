@@ -1096,6 +1096,14 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           }
 
           if (turnResult.status >= 400 || !turnResult.bodyStream) {
+
+            // An upstream-reported failure is the same abandonment as a stall: the browser turn
+            // may still be alive on the page ("Something went wrong" leaves the tab mid-flight), so
+            // release it before the client's retry opens a fresh turn and the two contend for the
+            // single launcher page. Guards inside triggerInterrupt make this a no-op when the turn
+            // already completed or /admin/ cancellation is switched off; not awaited so the error
+            // reaches the client immediately (the admin call is bounded by INTERRUPT_TIMEOUT_MS).
+            void triggerInterrupt();
             let errCode = "upstream_error";
             try {
               const parsed = JSON.parse(turnResult.bodyText ?? "{}");
@@ -1141,6 +1149,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               // trip (the call itself is bounded by INTERRUPT_TIMEOUT_MS).
               void triggerInterrupt();
             } else {
+              // Same rule as the typed failures above: a broken relay must not leave the browser
+              // turn running under a client that is about to retry.
+              void triggerInterrupt();
               logFailed("upstream_stream_error");
             }
           };
@@ -1356,6 +1367,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               lastError = "client aborted";
               return { status: 499, body: "", contentType: "application/json" };
             }
+              // Any upstream-reported failure (5xx, "Something went wrong", a broken stream) abandons its
+              // browser turn just like a stall does, so cancel it before the client retries: the retry must
+              // not race a turn that is still alive on the page. Guards inside triggerInterrupt make this a
+              // no-op once the turn completed or cancellation is switched off, and the call is not awaited so
+              // the error still reaches the client immediately.
+              void triggerInterrupt();
             if (error instanceof UpstreamStallError) {
               const isNoProgress = error.kind === "no_progress";
               const errorCode = isNoProgress ? "upstream_no_progress" : "upstream_stall_timeout";

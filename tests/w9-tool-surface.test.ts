@@ -38,6 +38,9 @@ function upstream(opts: MockOptions = {}) {
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
+      const adminPath = new URL(req.url).pathname;
+      // /admin/* is turn cancellation, not a turn: it must not be counted as one.
+      if (adminPath.startsWith('/admin/')) return Response.json({ ok: true });
       calls += 1;
       const index = calls;
       const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;

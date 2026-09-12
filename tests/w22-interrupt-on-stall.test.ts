@@ -9,6 +9,9 @@
  *
  * The frozen contract encoded here:
  *  - when the facade gives up on a turn because of its OWN deadline
+ *  - the same rule holds for an upstream-REPORTED failure ("Something went wrong", a 5xx, a broken
+ *    stream): the turn is cancelled before the error is returned, because that turn is just as
+ *    abandoned as a stalled one and the client's retry must not race it for the page (A5/A6).
  *    (`UpstreamStallError`, kind `no_progress` or `stream_stall`, on either path), it must send
  *    exactly ONE `POST <upstreamBaseUrl>/admin/interrupt-turn` — the same call the client-abort
  *    path already makes (w17) — BEFORE the client response is completed, so the retry starts on a
@@ -90,6 +93,9 @@ interface MockOptions {
   /** `sse`: answer with an SSE stream that only ever emits heartbeats (no content progress).
    *  Otherwise: sleep forever-ish before answering at all (no bytes). */
   sse?: boolean;
+  /** Answer the turn immediately with this failure, the way the browser layer reports
+   *  "Something went wrong" / a 5xx after the submission was accepted. */
+  fail?: { status: number; body: string };
 }
 
 /** Mock upstream: records every native turn identity and every /admin/ hit. */
@@ -134,6 +140,13 @@ function upstream(opts: MockOptions = {}) {
         const native = asRecord(parseJson(await req.text())) ?? {};
         bodies.push(native);
         turns.push(turnIdentityOf(native));
+
+        if (opts.fail) {
+          return new Response(opts.fail.body, {
+            status: opts.fail.status,
+            headers: { "content-type": "application/json" },
+          });
+        }
 
         if (opts.sse) {
           const encoder = new TextEncoder();
@@ -344,6 +357,95 @@ test(
       expect(unhandled).toEqual([]);
     } finally {
       process.off("unhandledRejection", onUnhandled);
+      await layer.stop();
+      up.stop();
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  20_000,
+);
+
+// -------------------------------------------------------------------------------------------
+// A5: upstream reports the failure itself ("Something went wrong" after an accepted submission).
+// The turn is just as abandoned as a stalled one, so it must be cancelled before the client sees
+// the error — otherwise the client's retry races a browser turn that is still alive on the page.
+// -------------------------------------------------------------------------------------------
+test(
+  "A5 an upstream-reported failure also cancels the abandoned turn",
+  async () => {
+    const up = upstream({
+      fail: {
+        status: 500,
+        body: JSON.stringify({
+          error: {
+            message: "ChatGPT ended the turn with 'Something went wrong'. Retry the turn.",
+            code: "chatgpt_submitted_turn_failed",
+          },
+        }),
+      },
+    });
+    const home = homeWithConfig(CONTROL_TOKEN);
+    const layer = await startExternalLayer({
+      apiKey: KEY,
+      upstreamBaseUrl: up.url,
+      tokenProvider: async () => "tok",
+      port: 0,
+      upstreamHome: home,
+    });
+    try {
+      const res = await post(layer.baseUrl, { model: "chatgpt-web/latest", input: "hi" });
+      const text = await res.text();
+
+      // The upstream failure still reaches the client unchanged (one attempt: the client retries).
+      expect(res.status).toBe(500);
+      expect(text).toContain("Something went wrong");
+      expect(up.responsesCalls()).toBe(1);
+
+      await waitForInterrupt(up);
+      expect(up.interrupts.length).toBe(1);
+      const identity = up.turns[0];
+      expect(identity?.turnId ?? "").not.toBe("");
+      expect(up.interrupts[0].body).toEqual({ threadId: identity.threadId, turnId: identity.turnId });
+      expect(up.interrupts[0].auth).toBe(`Bearer ${CONTROL_TOKEN}`);
+      await Bun.sleep(DUPLICATE_WINDOW_MS);
+      expect(up.interrupts.length).toBe(1);
+      expect(text.includes(CONTROL_TOKEN)).toBe(false);
+    } finally {
+      await layer.stop();
+      up.stop();
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+  20_000,
+);
+
+// -------------------------------------------------------------------------------------------
+// A6: abortUpstreamTurns:false stays a full opt-out on the failure path too.
+// -------------------------------------------------------------------------------------------
+test(
+  "A6 abortUpstreamTurns:false keeps an upstream failure from touching /admin/",
+  async () => {
+    const up = upstream({
+      fail: { status: 502, body: JSON.stringify({ error: { message: "ChatGPT stopped responding after the task started." } }) },
+    });
+    const home = homeWithConfig(CONTROL_TOKEN);
+    const layer = await startExternalLayer({
+      apiKey: KEY,
+      upstreamBaseUrl: up.url,
+      tokenProvider: async () => "tok",
+      port: 0,
+      upstreamHome: home,
+      abortUpstreamTurns: false,
+    });
+    try {
+      const res = await post(layer.baseUrl, { model: "chatgpt-web/latest", input: "hi" });
+      const text = await res.text();
+      expect(res.status).toBe(502);
+      expect(text).toContain("stopped responding");
+      await Bun.sleep(DUPLICATE_WINDOW_MS);
+      expect(up.interrupts.length).toBe(0);
+      expect(up.adminAttempts.length).toBe(0);
+    } finally {
       await layer.stop();
       up.stop();
       rmSync(home, { recursive: true, force: true });

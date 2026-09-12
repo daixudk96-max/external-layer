@@ -131,6 +131,9 @@ test("A4: first byte stall is retried with fresh prov-* turn identity and then s
   const upstream = Bun.serve({
     port: 0,
     async fetch(req) {
+      const adminPath = new URL(req.url).pathname;
+      // /admin/* is turn cancellation, not a turn: it must not be counted as one.
+      if (adminPath.startsWith('/admin/')) return Response.json({ ok: true });
       calls += 1;
       const body = ((await req.json().catch(() => ({}))) ?? {}) as Record<string, any>;
       const turnId = body.client_metadata?.["x-codex-turn-metadata"]?.turn_id;

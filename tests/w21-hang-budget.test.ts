@@ -92,7 +92,10 @@ function failingUpstream() {
   let calls = 0;
   const server = Bun.serve({
     port: 0,
-    async fetch() {
+    async fetch(req) {
+      const adminPath = new URL(req.url).pathname;
+      // /admin/* is turn cancellation, not a turn: it must not be counted as one.
+      if (adminPath.startsWith('/admin/')) return Response.json({ ok: true });
       calls += 1;
       return new Response(
         JSON.stringify({ error: { message: "ChatGPT ended the turn with 'Something went wrong'. Retry the turn." } }),
@@ -137,7 +140,10 @@ test("A3: an empty completed turn fails closed once, not five times", async () =
   let calls = 0;
   const up = Bun.serve({
     port: 0,
-    async fetch() {
+    async fetch(req) {
+      const adminPath = new URL(req.url).pathname;
+      // /admin/* is turn cancellation, not a turn: it must not be counted as one.
+      if (adminPath.startsWith('/admin/')) return Response.json({ ok: true });
       calls += 1;
       return Response.json({
         id: "resp_empty",
@@ -168,7 +174,10 @@ test("A4: a turn that only heartbeats is killed on the progress deadline, never 
   let calls = 0;
   const up = Bun.serve({
     port: 0,
-    async fetch() {
+    async fetch(req) {
+      const adminPath = new URL(req.url).pathname;
+      // /admin/* is turn cancellation, not a turn: it must not be counted as one.
+      if (adminPath.startsWith('/admin/')) return Response.json({ ok: true });
       calls += 1;
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
@@ -210,7 +219,10 @@ test("A5: heartbeats plus steady real content keep the turn alive past the deadl
   let calls = 0;
   const up = Bun.serve({
     port: 0,
-    async fetch() {
+    async fetch(req) {
+      const adminPath = new URL(req.url).pathname;
+      // /admin/* is turn cancellation, not a turn: it must not be counted as one.
+      if (adminPath.startsWith('/admin/')) return Response.json({ ok: true });
       calls += 1;
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
