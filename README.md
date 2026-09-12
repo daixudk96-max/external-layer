@@ -167,3 +167,14 @@ This repository contains **none** of the upstream code and none of its shell. Th
 **排障**：`GET /healthz` 看计数与 `last_error`；日志里每次请求一行 `req=... model=... stream=...`，结束为 `done status=200 elapsed=...` 或 `failed code=... elapsed=...`。常见错误码见上文表格（`upstream_no_progress` = 上游在规定时间内没产出真内容，已被主动中止；`empty_turn_content` = 空回合，绝不入历史）。
 
 **更多细节**：`docs/context-windows.md`（上下文数值怎么来）、`docs/dsh-endpoint-guide.md`（端点/密钥/档位接入全表）、`docs/upstream-gap-audit.md`（哪些能力由上游原样承担）。
+
+
+## 2026-09-13: DSH tab-reuse / native tool-round correction
+
+See [the source-and-log audit](docs/tab-reuse-root-cause-2026-09-13.md) for the Chinese report, exact boundaries, and verification commands. In the documented DSH integration `prompt_cache_key` is a per-chat session ID. This key now takes priority over volatile instruction-package prefix matching. A pending native tool execution keeps its `turn_id` across HTTP result rounds and reconnects; a new human task still gets a new turn. Same-thread HTTP observers are serialized until their stream ends, not until the entire browser task ends. No upstream or DSH modification is required.
+
+The historical 20k payload correlation above is not a proved ChatGPT capacity limit. Submitted diagnostics already have about 500k `body.textContent` characters **before** prompt insertion, and the upstream `response-stalled-60s` marker measures wall time after send, not continuous lack of progress. The fix does not claim to eliminate every ChatGPT UI or network failure.
+
+Runtime dependencies remain zero. `typescript` is a development dependency for reproducible `bunx tsc --noEmit`. The original test assertions are retained; two workstation-dependent fixtures are made portable (explicit mock account capability and a clearly labelled read-only upstream reference).
+
+Source ZIPs omit Git history. The legacy audit test reads `git show HEAD:package.json`, so run tests from the Git checkout; or initialize and commit the extracted source as a local test baseline before running `bun test`.

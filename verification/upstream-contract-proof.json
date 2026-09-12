@@ -1,0 +1,11 @@
+{
+  "upstream_source": "/mnt/data/tab-reuse-audit/upstream/src/adapters/chatgpt-web/turn-execution.ts",
+  "upstream_sha256_before": "11bfc6dc81efb122424171ccf66b5ea16e800f994b97ab28740c37bceb8dd8e9",
+  "upstream_sha256_after": "11bfc6dc81efb122424171ccf66b5ea16e800f994b97ab28740c37bceb8dd8e9",
+  "old_code_execution_key_changed": true,
+  "old_code_waits_for_undelivered_tool_result": true,
+  "fixed_code_same_execution_different_round": true,
+  "real_upstream_gate_returns_same_session": true,
+  "network_calls": 0,
+  "upstream_files_modified": 0
+}

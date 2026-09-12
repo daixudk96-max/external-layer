@@ -1,5 +1,7 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { ConversationRegistry } from "./conversation-registry";
+import { NativeRoundGate, NativeTurnState, releaseOnStreamEnd, type NativeRoundIdentity } from "./native-turn-state";
+import { SseEvents, terminalEvent, progressEvent, type SseEvent } from "./sse-events";
 import {
   createFailureBreaker,
   DEFAULT_PAYLOAD_CHARS_THRESHOLD,
@@ -407,8 +409,8 @@ function tapStream(
         for (;;) {
           const { done, value } = await reader.read();
           if (done) {
-            controller.close();
             onComplete(accumulated);
+            controller.close();
             break;
           }
           if (value) {
@@ -425,17 +427,6 @@ function tapStream(
     },
   });
 }
-
-const PROGRESS_MARKERS = [
-  "output_text.delta",
-  "function_call",
-  "reasoning_summary_text.delta",
-  "reasoning_text.delta",
-  "response.completed",
-  "response.incomplete",
-  "response.failed",
-  "[DONE]",
-];
 
 function extractResponseIdFromSse(fullText: string): string | undefined {
   const lines = fullText.split("\n");
@@ -464,6 +455,8 @@ function withContentProgressWatchdog(
   source: ReadableStream<Uint8Array>,
   stallTimeoutSec: number,
   progressTimeoutMs: number,
+  onEvent?: (event: SseEvent) => void,
+  requireTerminal = true,
 ): ReadableStream<Uint8Array> {
   const stallTimeoutMs = stallTimeoutSec * 1000;
   const reader = source.getReader();
@@ -516,8 +509,8 @@ function withContentProgressWatchdog(
     }, progressTimeoutMs);
   }
 
-  const textDecoder = new TextDecoder("utf-8", { fatal: false });
-  let rollingBuffer = "";
+  const events = new SseEvents();
+  let sawTerminal = false;
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -539,6 +532,7 @@ function withContentProgressWatchdog(
           }
           if (done) {
             cleanupTimers();
+            if (requireTerminal && !sawTerminal) throw new Error("upstream SSE ended before a terminal event");
             try {
               controller.close();
             } catch {}
@@ -550,24 +544,10 @@ function withContentProgressWatchdog(
             resetStallTimer();
 
             // 检查内容进度标记
-            const chunkText = textDecoder.decode(value, { stream: true });
-            rollingBuffer += chunkText;
-
-            let hasProgress = false;
-            for (const marker of PROGRESS_MARKERS) {
-              if (rollingBuffer.includes(marker)) {
-                hasProgress = true;
-                break;
-              }
-            }
-
-            if (hasProgress) {
-              resetProgressTimer();
-              if (rollingBuffer.length > 1024) {
-                rollingBuffer = rollingBuffer.slice(-1024);
-              }
-            } else if (rollingBuffer.length > 65536) {
-              rollingBuffer = rollingBuffer.slice(-1024);
+            for (const event of events.push(value)) {
+              if (terminalEvent(event)) sawTerminal = true;
+              if (progressEvent(event)) resetProgressTimer();
+              onEvent?.(event);
             }
 
             controller.enqueue(value);
@@ -741,9 +721,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
     statePath: config.conversationsPath,
   });
   const failureBreaker = createFailureBreaker(config.failureBreaker);
+  const nativeTurns = new NativeTurnState();
+  const roundGate = new NativeRoundGate();
 
   const server = Bun.serve({
     port: config.port ?? 0,
+    hostname: "127.0.0.1",
     // Bun closes an idle socket after 10s by default, which kills a long-thinking SSE turn:
     // the upstream can sit behind its own heartbeats for minutes before the first delta.
     idleTimeout: 240,
@@ -820,12 +803,16 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
         }
 
         const normalizedInputItems = normalizeInput(standard.input);
-        const resolvedThreadId = continuationEnabled
+        const conversation = continuationEnabled
           ? conversationRegistry.resolveConversation(
               Array.isArray(standard.input) ? normalizedInputItems : [],
               previousResponseId,
-            ).threadId
-          : `prov-${randomUUID()}`;
+              typeof standard.prompt_cache_key === "string" ? standard.prompt_cache_key : undefined,
+            )
+          : { threadId: `prov-${randomUUID()}`, isNew: true, source: "disabled" };
+        const resolvedThreadId = conversation.threadId;
+        let currentNativeRound: NativeRoundIdentity | undefined;
+        console.log(`[external-layer] req=${reqId} thread=${resolvedThreadId} identity=${conversation.source ?? "history-prefix"}`);
 
         const payloadSize = estimatePayloadSize(
           normalizedInputItems,
@@ -956,11 +943,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
         // retry resolve to the SAME thread, so the breaker's counter accumulates across retries
         // (and a successful retry re-enters normal continuation).
         const noteTurnFailure = (message?: string) => {
+          if (currentNativeRound) nativeTurns.fail(currentNativeRound);
           // A navigation blip is a network event, not a payload problem: counting it would let
           // a flaky exit trip `conversation_too_large`. The conversation is still bound so the
           // client's own retry continues the same thread.
           if (message === undefined || !isNavigationError(errorText(message))) {
-            failureBreaker.recordFailure(resolvedThreadId, payloadChars);
+            failureBreaker.recordFailure(resolvedThreadId, payloadChars, payloadSize.cjkChars);
           }
           if (continuationEnabled && Array.isArray(standard.input)) {
             conversationRegistry.recordTurn(resolvedThreadId, normalizedInputItems);
@@ -1031,6 +1019,14 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           }
         }
 
+        let releaseRound: () => void;
+        try { releaseRound = await roundGate.acquire(resolvedThreadId, req.signal); }
+        catch {
+          logFailed("client_aborted");
+          return new Response(null, { status: 499 });
+        }
+        let streamOwnsLease = false;
+        try {
         let token: string;
         try {
           token = await config.tokenProvider();
@@ -1205,11 +1201,15 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   throw new ClientAbortedError();
                 }
                 const clonedStandard = JSON.parse(JSON.stringify(mappedResolution.mapped)) as Record<string, unknown>;
+                currentNativeRound = nativeTurns.choose(resolvedThreadId, normalizedInputItems,
+                  mappedResolution.resolvedSlug, previousResponseId);
+                const selectedIdentity = currentNativeRound;
+                console.log(`[external-layer] req=${reqId} thread=${resolvedThreadId} turn=${selectedIdentity.turnId} round=${selectedIdentity.kind} model=${mappedResolution.resolvedSlug}`);
                 const native = toNativeRequest(
                   clonedStandard,
                   {
                     ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}),
-                    identity: { threadId: resolvedThreadId, turnId: `prov-${randomUUID()}` },
+                    identity: selectedIdentity,
                   },
                 );
                 const turnMeta = extractTurnIdentity(native);
@@ -1438,40 +1438,54 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             turnResult.bodyStream,
             effectiveStallTimeoutSec,
             effectiveProgressTimeoutMs,
+            event => {
+              const value = event.data?.response;
+              if (event.type === "response.completed" && isRecord(value) && currentNativeRound) {
+                // Commit the suspension BEFORE sending the terminal bytes to the client.
+                // end_turn:false completes an HTTP round, not the native browser execution.
+                nativeTurns.observe(currentNativeRound, { ...value, status: "completed" });
+                turnCompleted = true;
+                req.signal.removeEventListener("abort", onClientAbort);
+              }
+            },
+            turnResult.contentType.includes("text/event-stream"),
           );
           // W26: set when OUR watchdog terminates the relay (onStreamError) — the tap below must
           // then neither record success (that would undo the failure already noted) nor double
           // count the facade-synthesized error frames as an upstream failure.
           let relayFailed = false;
           const recordedStream = tapStream(watchdogStream, (fullText) => {
-            if (shouldCheckIdempotency) {
-              idempotencyStore.save(idempotencyKey, {
-                status: 200,
-                body: fullText,
-                contentType: turnResult.contentType,
-              });
-            }
-            if (continuationEnabled && Array.isArray(standard.input)) {
-              const respId = extractResponseIdFromSse(fullText);
-              conversationRegistry.recordTurn(resolvedThreadId, normalizedInputItems, respId);
-            }
-            // W26: an upstream-originated in-band failure (response.failed / response.incomplete,
-            // without response.completed) is a FAILED turn for the breaker — before this fix the
-            // relay recorded it as a success, which made the death-spiral breaker dead for
-            // streaming clients. noteTurnFailure skips nav-class messages by itself (w25 rule).
             const upstreamFailure = !relayFailed ? upstreamStreamFailureOf(fullText) : undefined;
             if (upstreamFailure !== undefined) {
               lastError = upstreamFailure;
               noteTurnFailure(upstreamFailure);
-            } else if (!relayFailed) {
-              lastError = undefined;
-              failureBreaker.recordSuccess(resolvedThreadId);
+              void triggerInterrupt();
+              logFailed("upstream_stream_failed");
+              return;
             }
+            if (relayFailed) return;
+            if (shouldCheckIdempotency) {
+              idempotencyStore.save(idempotencyKey, {
+                status: 200, body: fullText, contentType: turnResult.contentType,
+              });
+            }
+            if (continuationEnabled) {
+              const respId = extractResponseIdFromSse(fullText);
+              conversationRegistry.recordTurn(resolvedThreadId, normalizedInputItems, respId);
+            }
+            lastError = undefined;
+            failureBreaker.recordSuccess(resolvedThreadId);
             logDone(200);
           });
 
           const onStreamError = (error: unknown) => {
             relayFailed = true;
+            if (turnCompleted) {
+              // A semantic round terminal already reached us. Do not revoke a suspended
+              // tool execution just because the transport broke while draining its tail.
+              logFailed("upstream_stream_error_after_terminal");
+              return;
+            }
             if (error instanceof UpstreamStallError) {
               const errCode = error.kind === "no_progress" ? "upstream_no_progress" : "upstream_stall_timeout";
               logFailed(errCode);
@@ -1509,12 +1523,14 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   turnCompleted = true;
                 })
               : clientStream;
-            return new Response(wrappedStream, {
+            streamOwnsLease = true;
+            return new Response(releaseOnStreamEnd(wrappedStream, releaseRound), {
               status: 200,
               headers: {
                 "content-type": turnResult.contentType,
                 ...(contextWindowHeaderValue ? { "x-ext-layer-context-window": contextWindowHeaderValue } : {}),
                 "x-ext-layer-conversation": resolvedThreadId,
+                ...(currentNativeRound ? { "x-ext-layer-native-turn": currentNativeRound.turnId } : {}),
                 ...payloadSignalHeaders,
               },
             });
@@ -1549,7 +1565,8 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   turnCompleted = true;
                 })
               : chatStream;
-            return new Response(wrappedStream, {
+            streamOwnsLease = true;
+            return new Response(releaseOnStreamEnd(wrappedStream, releaseRound), {
               status: 200,
               headers: {
                 "content-type": "text/event-stream",
@@ -1572,11 +1589,15 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   throw new ClientAbortedError();
                 }
                 const clonedStandard = JSON.parse(JSON.stringify(mappedResolution.mapped)) as Record<string, unknown>;
+                currentNativeRound = nativeTurns.choose(resolvedThreadId, normalizedInputItems,
+                  mappedResolution.resolvedSlug, previousResponseId);
+                const selectedIdentity = currentNativeRound;
+                console.log(`[external-layer] req=${reqId} thread=${resolvedThreadId} turn=${selectedIdentity.turnId} round=${selectedIdentity.kind} model=${mappedResolution.resolvedSlug}`);
                 const native = toNativeRequest(
                   clonedStandard,
                   {
                     ...(config.defaultEnvironment ? { defaultEnvironment: config.defaultEnvironment } : {}),
-                    identity: { threadId: resolvedThreadId, turnId: `prov-${randomUUID()}` },
+                    identity: selectedIdentity,
                   },
                 );
                 const turnMeta = extractTurnIdentity(native);
@@ -1661,6 +1682,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   return { status: upstream.status, body, contentType };
                 }
 
+                if (currentNativeRound && isRecord(parsed)) nativeTurns.observe(currentNativeRound, parsed);
                 const verdict = classifyEmptyCompletion(parsed);
                 if (verdict.empty) {
                   throw new EmptyTurnError(verdict.reason ?? "completed turn produced no output and no tool calls");
@@ -1849,6 +1871,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             ...(result.status === 200 ? payloadSignalHeaders : {}),
           },
         });
+        } finally {
+          if (!streamOwnsLease) releaseRound();
+        }
       }
       if (req.method === "GET" && url.pathname === "/v1/context") {
         if (!bearerMatches(req.headers.get("authorization"), config.apiKey)) return unauthorized();

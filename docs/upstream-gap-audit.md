@@ -23,7 +23,9 @@
 
 ## 3. 上游提交与标识符扫描 (SWEEP)
 
-SWEEP: swp-01 | ensureChatGptPersonalizedConnectorAccess | upstream-commit 509cfc9 | local: E:/github/chatgpt-web-2-api/provider/codex-chatgpt-web/src/adapters/chatgpt-web/browser-worker.ts | result: PRESENT | raw: research/w12-sweep.log#marker-personalization-509cfc9
+Portable reference (2026-09-13): the PRESENT row now resolves to the shipped, immutable upstream function excerpt, with source commit and SHA-256. The original legacy workstation path and historical observation remain unchanged in `research/w12-sweep.log`; that private legacy checkout is not part of this standalone repository. The reference is not executable runtime code and does not claim to reproduce that legacy fork.
+
+SWEEP: swp-01 | ensureChatGptPersonalizedConnectorAccess | upstream-commit 509cfc9 | local: research/upstream-personalization-reference.txt | result: PRESENT | raw: research/w12-sweep.log#marker-personalization-509cfc9
 SWEEP: swp-02 | CHATGPT_PROMPT_INSERT_CHUNK_CHARS | upstream-commit bda266b | local: E:/github/chatgpt-web-2-api/provider/codex-chatgpt-web/src/adapters/chatgpt-web/browser-worker.ts | result: ABSENT | raw: research/w12-sweep.log#marker-chunked-prompt-bda266b
 SWEEP: swp-03 | streamCompletedBlocks | upstream-commit 4b1714d | local: E:/github/chatgpt-web-2-api/provider/codex-chatgpt-web/src/adapters/chatgpt-web/markdown.ts | result: ABSENT | raw: research/w12-sweep.log#marker-defer-answer-4b1714d
 
