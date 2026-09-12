@@ -28,6 +28,11 @@ import {
   navigationErrorPattern,
   withTransientRetry,
 } from "./reliability";
+import {
+  peekUpstreamSse,
+  UpstreamStreamNavFailure,
+  upstreamStreamFailureOf,
+} from "./stream-peek";
 import { resolveProgressTimeoutMs, resolveStallTimeoutSec, UpstreamStallError } from "./stall-timeout";
 import { resolveToolTimeouts, type ToolTimeoutsConfig } from "./tool-timeouts";
 import {
@@ -1017,6 +1022,9 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             ignoreTransientPatterns: true,
             isRetryable: (error: unknown) => {
               if (error instanceof ClientAbortedError) return false;
+              // W26: an in-band streaming failure is always nav-class by construction (the peek
+              // only throws for it), so the OUTER budget retries it; the inner budget must not.
+              if (error instanceof UpstreamStreamNavFailure) return true;
               return error instanceof UpstreamHttpFailure && isNavigationError(errorText(error.body));
             },
             onRetry: (attempt: number, message: string) => {
@@ -1152,8 +1160,19 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                   throw new UpstreamHttpFailure(upstream.status, bodyText, contentType);
                 }
 
-                // 2xx 成功：流式边到边转发，不读 bodyText
-                return { status: upstream.status, bodyStream: upstream.body!, contentType };
+                // 2xx 成功：流式边到边转发，不读 bodyText。W26: 先窥探首段——上游把流式回合
+                // 失败作为 200 流内的 response.failed 帧投递（ccw-upstream/src/bridge.ts:659/:685，
+                // 且 response.created 在流构造时同步先发，bridge.ts:737），HTTP 级 nav 重试永远
+                // 看不见；在尚未中继任何真实内容前识别 nav 类失败，换新 turn 不可见重试。
+                return {
+                  status: upstream.status,
+                  bodyStream: await peekUpstreamSse(
+                    upstream.body!,
+                    contentType,
+                    Math.min(effectiveFirstByteTimeoutMs, 120_000),
+                  ),
+                  contentType,
+                };
               },
               {
                 limit: retryLimit,
@@ -1231,6 +1250,13 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             } else if (error instanceof UpstreamHttpFailure) {
               lastError = `upstream ${error.status}`;
               turnResult = { status: error.status, bodyText: error.body, contentType: error.contentType };
+            } else if (error instanceof UpstreamStreamNavFailure) {
+              // W26: the in-band nav budget is exhausted — deliver the ORIGINAL attempt's bytes
+              // verbatim (created → heartbeats → response.failed → [DONE]), the same frames the
+              // client would have seen without the peek. Nav failures are not counted by the
+              // breaker (w25 rule); the tap's failure accounting skips them via noteTurnFailure.
+              lastError = `upstream stream failed: ${error.navMessage}`;
+              turnResult = { status: 200, bodyStream: error.replayStream(), contentType: error.contentType };
             } else if (error instanceof UpstreamNetworkError) {
               lastError = error.detail;
               turnResult = {
@@ -1290,6 +1316,10 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             effectiveStallTimeoutSec,
             effectiveProgressTimeoutMs,
           );
+          // W26: set when OUR watchdog terminates the relay (onStreamError) — the tap below must
+          // then neither record success (that would undo the failure already noted) nor double
+          // count the facade-synthesized error frames as an upstream failure.
+          let relayFailed = false;
           const recordedStream = tapStream(watchdogStream, (fullText) => {
             if (shouldCheckIdempotency) {
               idempotencyStore.save(idempotencyKey, {
@@ -1302,12 +1332,23 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               const respId = extractResponseIdFromSse(fullText);
               conversationRegistry.recordTurn(resolvedThreadId, normalizedInputItems, respId);
             }
-            lastError = undefined;
+            // W26: an upstream-originated in-band failure (response.failed / response.incomplete,
+            // without response.completed) is a FAILED turn for the breaker — before this fix the
+            // relay recorded it as a success, which made the death-spiral breaker dead for
+            // streaming clients. noteTurnFailure skips nav-class messages by itself (w25 rule).
+            const upstreamFailure = !relayFailed ? upstreamStreamFailureOf(fullText) : undefined;
+            if (upstreamFailure !== undefined) {
+              lastError = upstreamFailure;
+              noteTurnFailure(upstreamFailure);
+            } else if (!relayFailed) {
+              lastError = undefined;
+              failureBreaker.recordSuccess(resolvedThreadId);
+            }
             logDone(200);
-            failureBreaker.recordSuccess(resolvedThreadId);
           });
 
           const onStreamError = (error: unknown) => {
+            relayFailed = true;
             if (error instanceof UpstreamStallError) {
               const errCode = error.kind === "no_progress" ? "upstream_no_progress" : "upstream_stall_timeout";
               logFailed(errCode);
