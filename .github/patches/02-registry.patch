@@ -1,0 +1,75 @@
+diff --git a/src/conversation-registry.ts b/src/conversation-registry.ts
+index a73c2c7..89ca0c9 100644
+--- a/src/conversation-registry.ts
++++ b/src/conversation-registry.ts
+@@ -60,6 +60,9 @@ export interface ConversationRecord {
+   itemDigests: string[];
+   responseIds: string[];
+   lastUsedAt: number;
++  /** Hashed DSH prompt_cache_key; never persist the caller's raw key. */
++  sessionKey?: string;
++  lineageDigests?: string[];
+ }
+ 
+ export interface ConversationRegistryConfig {
+@@ -140,7 +143,34 @@ export class ConversationRegistry {
+   public resolveConversation(
+     items: unknown[],
+     previousResponseId?: string,
+-  ): { threadId: string; isNew: boolean } {
++    promptCacheKey?: string,
++  ): { threadId: string; isNew: boolean; source?: string } {
++    // In the documented DSH contract prompt_cache_key is a per-chat session ID,
++    // not a shared cache bucket. Authority/developer blocks may be regenerated on
++    // every call; they are not conversation identity. A destructive dialogue change
++    // still opens a new epoch, so old browser history cannot survive compaction.
++    if (typeof promptCacheKey === "string" && promptCacheKey.trim()) {
++      const sessionKey = createHash("sha256").update(promptCacheKey).digest("hex");
++      const lineageDigests = dialogueDigests(items);
++      const prior = [...this.entries.values()].find(entry => entry.sessionKey === sessionKey);
++      const previous = prior?.lineageDigests ?? [];
++      const appending = previous.length <= lineageDigests.length
++        && previous.every((digest, index) => digest === lineageDigests[index]);
++      if (prior && (appending || previousResponseId && prior.responseIds.includes(previousResponseId))) {
++        prior.lastUsedAt = Date.now();
++        this.entries.delete(prior.threadId);
++        this.entries.set(prior.threadId, prior);
++        return { threadId: prior.threadId, isNew: false, source: "session-key" };
++      }
++      if (prior) delete prior.sessionKey;
++      const threadId = `prov-${randomUUID()}`;
++      // Reserve before the first await, rather than only after the response finishes.
++      // Concurrent arrivals for this session must see the same owner.
++      this.entries.set(threadId, { threadId, itemDigests: items.map(canonicalItemDigest),
++        responseIds: [], lastUsedAt: Date.now(), sessionKey, lineageDigests });
++      this.evictIfNeeded();
++      return { threadId, isNew: true, source: prior ? "history-reset" : "session-key-new" };
++    }
+     // 1. previous_response_id 优先
+     if (previousResponseId && previousResponseId.trim().length > 0) {
+       const threadId = this.responseIdToThread.get(previousResponseId.trim());
+@@ -209,6 +239,7 @@ export class ConversationRegistry {
+       };
+     } else {
+       record.itemDigests = incomingDigests;
++      if (record.sessionKey) record.lineageDigests = dialogueDigests(items);
+       if (responseId && !record.responseIds.includes(responseId)) {
+         record.responseIds.push(responseId);
+       }
+@@ -225,3 +256,16 @@ export class ConversationRegistry {
+     this.persistSync();
+   }
+ }
++
++/** Ignore volatile instruction packages, but retain every conversational message,
++ * tool argument/result and call identity in the lineage proof. */
++function dialogueDigests(items: unknown[]): string[] {
++  return items.flatMap(value => {
++    if (!value || typeof value !== "object" || Array.isArray(value)) return [canonicalItemDigest(value)];
++    const item = value as Record<string, unknown>;
++    if (item.role === "system" || item.role === "developer" || item.type === "reasoning") return [];
++    return [createHash("sha256").update(stableStringify({
++      digest: canonicalItemDigest(item), arguments: item.arguments ?? null, input: item.input ?? null,
++    })).digest("hex")];
++  });
++}

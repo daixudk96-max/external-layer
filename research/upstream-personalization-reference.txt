@@ -1,0 +1,46 @@
+READ-ONLY FORENSIC REFERENCE (not imported by runtime)
+Source: miuuyy/codex-chatgpt-web@e85e3693fdb4e3e033348c08df0298c20fcdb612
+File: src/adapters/chatgpt-web/browser-worker.ts:642-679
+Introduced/updated by upstream commit 509cfc9
+Source file SHA-256: bd083fb58a0d31c11fe6719f6d9bae189f70f910abcb3f7dcbc49f306ebec40d
+This is upstream reference code, NOT a copy of the unavailable legacy local fork.
+The historical legacy finding is preserved verbatim in research/w12-sweep.log.
+
+/** New Temporary Chats may suppress connectors until this exact browser conversation is Personalized. */
+export async function ensureChatGptPersonalizedConnectorAccess(
+  page: Page,
+  captureDiagnostic?: (checkpoint: string) => Promise<void>,
+  proveConfiguredConnectorAccess?: (signal?: AbortSignal) => Promise<boolean>,
+  abortSignal?: AbortSignal,
+): Promise<ChatGptPersonalizationPreflight> {
+  const deadline = Date.now() + CHATGPT_PERSONALIZATION_PREFLIGHT_TIMEOUT_MS;
+  const deadlineController = new AbortController();
+  const deadlineTimer = setTimeout(
+    () => deadlineController.abort(new ChatGptPersonalizationDeadlineError()),
+    Math.max(1, deadline - Date.now()),
+  );
+  deadlineTimer.unref?.();
+  const operationSignal = abortSignal
+    ? AbortSignal.any([abortSignal, deadlineController.signal])
+    : deadlineController.signal;
+  try {
+    return await ensureChatGptPersonalizedConnectorAccessWithinDeadline(
+      page,
+      deadline,
+      operationSignal,
+      captureDiagnostic,
+      proveConfiguredConnectorAccess,
+    );
+  } catch (error) {
+    if (error instanceof ChatGptPersistentBrowserStateError) throw error;
+    if (!abortSignal?.aborted && (
+      error instanceof ChatGptPersonalizationDeadlineError
+      || deadlineController.signal.aborted
+      || Date.now() >= deadline
+    )) {
+      throw chatGptConnectorUnavailableError("ChatGPT personalization preflight exceeded its readiness deadline");
+    }
+    throw error;
+  } finally {
+    clearTimeout(deadlineTimer);
+  }

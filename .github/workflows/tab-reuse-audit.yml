@@ -2,8 +2,12 @@ name: Tab reuse audit
 on:
   push:
     branches: [fix/tab-reuse-audit-20260913]
+  workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: tab-reuse-audit-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   verify:
     runs-on: ubuntu-22.04
@@ -11,19 +15,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          ref: ${{ github.ref_name }}
+          fetch-depth: 3
+      - name: Materialize reviewed patch and verify exact local-tested source
+        id: materialize
+        run: |
+          mkdir -p "$RUNNER_TEMP/audit"
+          git rev-parse HEAD > "$RUNNER_TEMP/audit/input-commit.txt"
+          if test -f .github/patches/expected-source.sha256; then
+            git apply --check .github/patches/*.patch
+            git apply .github/patches/*.patch
+            sha256sum --check .github/patches/expected-source.sha256 | tee "$RUNNER_TEMP/audit/source-checks.log"
+            cp .github/patches/expected-source.sha256 "$RUNNER_TEMP/audit/expected-source.sha256"
+            echo 'applied=true' >> "$GITHUB_OUTPUT"
+          fi
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.3.11'
-      - name: Install test tooling only
+      - name: Install development tooling
         run: |
           bun install
-          npm install --no-save --package-lock=false typescript@5.9.3
-          mkdir -p "$RUNNER_TEMP/audit"
           bun --version > "$RUNNER_TEMP/audit/bun-version.txt"
-          git rev-parse HEAD > "$RUNNER_TEMP/audit/commit.txt"
-      - name: Existing typecheck and tests (no live model calls)
-        id: gates
+      - name: Existing typecheck and complete test suite
         run: |
           set +e
           bunx tsc --noEmit > "$RUNNER_TEMP/audit/typecheck.log" 2>&1
@@ -32,19 +45,37 @@ jobs:
           tests=$?
           printf 'typecheck_exit=%s\ntests_exit=%s\n' "$types" "$tests" > "$RUNNER_TEMP/audit/gates.txt"
           cat "$RUNNER_TEMP/audit/gates.txt"
-          tail -n 15 "$RUNNER_TEMP/audit/tests.log"
+          tail -n 20 "$RUNNER_TEMP/audit/tests.log"
           test "$types" = 0 && test "$tests" = 0
-      - name: Export exact source and offline test runtime
+      - name: Verify the real read-only upstream owner gate
+        run: |
+          mkdir -p "$RUNNER_TEMP/upstream-readonly"
+          curl --fail --location --retry 2 https://codeload.github.com/miuuyy/codex-chatgpt-web/tar.gz/e85e3693fdb4e3e033348c08df0298c20fcdb612 -o "$RUNNER_TEMP/upstream.tar.gz"
+          tar -xzf "$RUNNER_TEMP/upstream.tar.gz" -C "$RUNNER_TEMP/upstream-readonly" --strip-components=1
+          EXT_LAYER_UPSTREAM_SOURCE="$RUNNER_TEMP/upstream-readonly" bun run scripts/verify-upstream-turn-contract.ts > "$RUNNER_TEMP/audit/upstream-contract-proof.json"
+          cat "$RUNNER_TEMP/audit/upstream-contract-proof.json"
+      - name: Commit verified source on the isolated repair branch only
+        if: success() && steps.materialize.outputs.applied == 'true'
+        run: |
+          test "$GITHUB_REF_NAME" = 'fix/tab-reuse-audit-20260913'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md docs/session-invariant.md docs/upstream-gap-audit.md package.json src/conversation-registry.ts src/external-layer.ts src/stream-peek.ts tests/w3-models.test.ts
+          git rm -r .github/patches
+          git commit -m 'fix: preserve native tool turns and DSH conversation ownership [skip ci]'
+          git push origin "HEAD:refs/heads/$GITHUB_REF_NAME"
+      - name: Export full source and audit results
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/audit"
-          git archive --format=tar.gz --output="$RUNNER_TEMP/audit/external-layer-source.tar.gz" HEAD
-          if command -v bun >/dev/null; then cp "$(command -v bun)" "$RUNNER_TEMP/audit/bun"; fi
-          if test -d node_modules; then tar -czf "$RUNNER_TEMP/audit/node_modules.tar.gz" node_modules; fi
-          curl --fail --location --retry 2 https://codeload.github.com/miuuyy/codex-chatgpt-web/tar.gz/e85e3693fdb4e3e033348c08df0298c20fcdb612 -o "$RUNNER_TEMP/audit/upstream-v5.0.6-readonly.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/audit/final-commit.txt"
+          git status --short > "$RUNNER_TEMP/audit/worktree-status.txt"
+          git archive --format=zip --prefix=external-layer/ --output="$RUNNER_TEMP/audit/external-layer-full-source.zip" HEAD
+          git diff 97ee01f17b3c56e8481be6e786a20f4fbea8423a HEAD -- . ':!.github' > "$RUNNER_TEMP/audit/external-layer-fix.patch"
+          sha256sum "$RUNNER_TEMP/audit/external-layer-full-source.zip" > "$RUNNER_TEMP/audit/archive.sha256"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: tab-reuse-audit-${{ github.sha }}
+          name: tab-reuse-fixed-${{ github.sha }}
           path: ${{ runner.temp }}/audit/
-          retention-days: 7
+          retention-days: 14
