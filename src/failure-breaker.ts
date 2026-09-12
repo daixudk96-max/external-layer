@@ -20,6 +20,8 @@ export interface FailureBreakerConfig {
   failureThreshold?: number;
   /** a failure only counts when the request payload is at least this many chars; default 150_000 */
   payloadCharsThreshold?: number;
+  /** a failure also counts when the estimated token size reaches the page reliability cliff; default 20_000 */
+  payloadTokenThreshold?: number;
   /** refusal window after tripping; one attempt is allowed after it expires; default 300_000 */
   cooldownMs?: number;
   /** injectable clock (tests) */
@@ -29,6 +31,8 @@ export interface FailureBreakerConfig {
 export const DEFAULT_FAILURE_THRESHOLD = 3;
 export const DEFAULT_PAYLOAD_CHARS_THRESHOLD = 150_000;
 export const DEFAULT_COOLDOWN_MS = 300_000;
+/** the live page reliability cliff in tokens (<20k tokens completes ~82%, >=20k ~2%) */
+export const DEFAULT_PAYLOAD_TOKEN_THRESHOLD = 20_000;
 /**
  * chars -> tokens, content-aware (2026-09-12: the flat 2.5 ratio overestimated ASCII-heavy
  * payloads by ~34% — real machine: 186,062 chars <-> 55,371 tokens = 3.36 chars/token for a
@@ -102,6 +106,7 @@ interface ConversationState {
 export function createFailureBreaker(rawConfig: FailureBreakerConfig = {}): FailureBreaker {
   const failureThreshold = rawConfig.failureThreshold ?? DEFAULT_FAILURE_THRESHOLD;
   const payloadCharsThreshold = rawConfig.payloadCharsThreshold ?? DEFAULT_PAYLOAD_CHARS_THRESHOLD;
+  const payloadTokenThreshold = rawConfig.payloadTokenThreshold ?? DEFAULT_PAYLOAD_TOKEN_THRESHOLD;
   const cooldownMs = rawConfig.cooldownMs ?? DEFAULT_COOLDOWN_MS;
   const now = rawConfig.now ?? Date.now;
   const states = new Map<string, ConversationState>();
@@ -117,6 +122,11 @@ export function createFailureBreaker(rawConfig: FailureBreakerConfig = {}): Fail
     }
     return fresh;
   };
+
+  /** A failure counts when the payload clears EITHER gate: the explicit char floor or the
+   *  token cliff (content-aware — ~72k ASCII chars and ~30k CJK chars both sit at ~20k tokens). */
+  const qualifies = (chars: number, cjkChars: number): boolean =>
+    chars >= payloadCharsThreshold || estimateTokensFromChars(chars, cjkChars) >= payloadTokenThreshold;
 
   if (rawConfig.enabled === false) {
     return {
@@ -140,13 +150,13 @@ export function createFailureBreaker(rawConfig: FailureBreakerConfig = {}): Fail
     shouldNudge(threadId, payloadChars, cjkChars = 0) {
       const state = stateOf(threadId);
       return {
-        nudge: state.failures >= 1 && payloadChars >= payloadCharsThreshold,
+        nudge: state.failures >= 1 && qualifies(payloadChars, cjkChars),
         failures: state.failures,
         estimatedTokens: estimateTokensFromChars(payloadChars, cjkChars),
       };
     },
-    recordFailure(threadId, payloadChars) {
-      if (payloadChars < payloadCharsThreshold) return;
+    recordFailure(threadId, payloadChars, cjkChars = 0) {
+      if (!qualifies(payloadChars, cjkChars)) return;
       const state = stateOf(threadId);
       state.failures += 1;
       if (state.failures >= failureThreshold) state.openedAt = now();

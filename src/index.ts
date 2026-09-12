@@ -64,6 +64,9 @@ const failureBreakerThreshold = process.env.EXT_LAYER_BREAKER_THRESHOLD !== unde
 const failureBreakerChars = process.env.EXT_LAYER_BREAKER_CHARS !== undefined
   ? Number(process.env.EXT_LAYER_BREAKER_CHARS)
   : undefined;
+const failureBreakerTokens = process.env.EXT_LAYER_BREAKER_TOKENS !== undefined
+  ? Number(process.env.EXT_LAYER_BREAKER_TOKENS)
+  : undefined;
 const failureBreakerCooldownMs = process.env.EXT_LAYER_BREAKER_COOLDOWN_MS !== undefined
   ? Number(process.env.EXT_LAYER_BREAKER_COOLDOWN_MS)
   : undefined;
@@ -105,6 +108,7 @@ const layer = await startExternalLayer({
           ...(failureBreakerEnabled !== undefined ? { enabled: failureBreakerEnabled } : {}),
           ...(failureBreakerThreshold !== undefined ? { failureThreshold: failureBreakerThreshold } : {}),
           ...(failureBreakerChars !== undefined ? { payloadCharsThreshold: failureBreakerChars } : {}),
+          ...(failureBreakerTokens !== undefined ? { payloadTokenThreshold: failureBreakerTokens } : {}),
           ...(failureBreakerCooldownMs !== undefined ? { cooldownMs: failureBreakerCooldownMs } : {}),
         },
       }

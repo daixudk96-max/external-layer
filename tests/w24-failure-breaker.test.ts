@@ -40,7 +40,7 @@
  */
 import { expect, test } from "bun:test";
 import { startExternalLayer } from "../src/external-layer";
-import { estimatePayloadSize, estimateTokensFromChars } from "../src/failure-breaker";
+import { createFailureBreaker, estimatePayloadSize, estimateTokensFromChars } from "../src/failure-breaker";
 
 const KEY = "sk-test-key";
 // 2026-09-12: raised past the new default payloadCharsThreshold (150_000) so the
@@ -413,4 +413,26 @@ test("A12 payload size counts the CJK share alongside the serialized char size",
   expect(size.cjkChars).toBeGreaterThan(0);
   expect(size.chars).toBe(JSON.stringify(item).length);
   expect(estimatePayloadSize([], "纯中文指令")).toEqual({ chars: 5, cjkChars: 5 });
+});
+
+// AMENDED 2026-09-12 (token-gate at the reliability cliff): char-based thresholds sit at the
+// wrong altitude. The page reliability cliff is ~20k TOKENS (<20k tokens completes ~82%,
+// >=20k tokens ~2% across 127 live turns), which is ~72k ASCII chars but only ~30k CJK chars.
+// A 150k-char gate is ~55k tokens — far above the cliff, so 20-27k-token conversations (the
+// user's actual death spiral tonight: 66-76k max-message chars, 24-27k tokens) never counted.
+test("A13 the default gate sits at the ~20k-token reliability cliff, not at a char size", () => {
+  const breaker = createFailureBreaker();
+  // ~72k ASCII chars == ~20k estimated tokens: qualifies.
+  breaker.recordFailure("cliff", 72_000, 0);
+  expect(breaker.shouldNudge("cliff", 72_000, 0).nudge).toBe(true);
+  expect(breaker.shouldNudge("cliff", 72_000, 0).failures).toBe(1);
+  // ~50k ASCII chars == ~13.9k tokens: below the cliff, not counted at all.
+  breaker.recordFailure("below", 50_000, 0);
+  expect(breaker.shouldNudge("below", 50_000, 0)).toEqual({ nudge: false, failures: 0, estimatedTokens: 13_889 });
+});
+
+test("A14 the token gate is configurable and dominates the char gate when tighter", () => {
+  const breaker = createFailureBreaker({ payloadTokenThreshold: 1_000 });
+  breaker.recordFailure("tiny", 4_000, 0); // 4000 ascii chars == ~1111 tokens >= 1000
+  expect(breaker.shouldNudge("tiny", 4_000, 0).nudge).toBe(true);
 });
