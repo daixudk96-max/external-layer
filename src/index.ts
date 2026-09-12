@@ -19,6 +19,17 @@ const defaultEnvironment = {
   sandboxMode: process.env.EXT_LAYER_SANDBOX ?? "danger-full-access",
 };
 
+function parseBooleanEnv(raw?: string): boolean | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim().toLowerCase();
+  if (trimmed === "1" || trimmed === "true") return true;
+  if (trimmed === "0" || trimmed === "false") return false;
+  return undefined;
+}
+
+const solAvailable = parseBooleanEnv(process.env.EXT_LAYER_SOL_AVAILABLE);
+const proAvailable = parseBooleanEnv(process.env.EXT_LAYER_PRO_AVAILABLE);
+
 const upstreamHome = process.env.EXT_LAYER_UPSTREAM_HOME;
 
 const layer = await startExternalLayer({
@@ -26,12 +37,15 @@ const layer = await startExternalLayer({
   upstreamBaseUrl,
   tokenProvider: createTokenProvider({ authJsonPath }),
   port,
+  ...(solAvailable !== undefined ? { solAvailable } : {}),
+  ...(proAvailable !== undefined ? { proAvailable } : {}),
   defaultEnvironment,
   statePath,
   stallTimeoutSec,
   firstByteTimeoutMs,
   upstreamHome,
 });
+
 console.log(
   `[external-layer] listening on ${layer.baseUrl}/v1 (upstream ${upstreamBaseUrl}) [stall=${layer.stallTimeoutSec}s firstByte=${layer.firstByteTimeoutMs}ms]`,
 );

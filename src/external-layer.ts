@@ -5,11 +5,29 @@ import {
   responsesToChatCompletions,
   transformResponsesStreamToChatStream,
 } from "./chat-completions";
-import { CHATGPT_WEB_DEFAULT_TIER_EFFORT, CHATGPT_WEB_LATEST_MODEL_ID, deriveTierWindows, tierSlugForEffort, unifiedCatalog, UnknownEffortError } from "./models";
+import {
+  CHATGPT_WEB_DEFAULT_TIER_EFFORT,
+  CHATGPT_WEB_LATEST_MODEL_ID,
+  CHATGPT_WEB_UNIFIED_TIERS,
+  ConflictingTierError,
+  defaultEffortFor,
+  deriveTierWindows,
+  TierUnavailableError,
+  tierForEffort,
+  tierSlugForEffort,
+  unifiedCatalog,
+  UnknownEffortError,
+} from "./models";
 import { classifyEmptyCompletion, isTransientError, withTransientRetry } from "./reliability";
 import { resolveStallTimeoutSec, UpstreamStallError } from "./stall-timeout";
 import { resolveToolTimeouts, type ToolTimeoutsConfig } from "./tool-timeouts";
-import { readUpstreamBiggerContext, readUpstreamControlToken, resolveUpstreamHome } from "./upstream-home";
+import {
+  readUpstreamBiggerContext,
+  readUpstreamControlToken,
+  resolveAccountCapabilities,
+  resolveUpstreamHome,
+} from "./upstream-home";
+
 
 export { UpstreamStallError } from "./stall-timeout";
 
@@ -264,21 +282,62 @@ function resolveRequestModel(
   standard: Record<string, unknown>,
   capabilities: { solAvailable: boolean; proAvailable: boolean },
 ): MappedModelResult {
-  const model = typeof standard.model === "string" ? standard.model : "";
-  if (model !== CHATGPT_WEB_LATEST_MODEL_ID) {
-    return { mapped: standard, resolvedSlug: model, resolvedEffort: CHATGPT_WEB_DEFAULT_TIER_EFFORT };
-  }
+  const model = typeof standard.model === "string" ? standard.model.trim() : "";
   const reasoning = isRecord(standard.reasoning) ? standard.reasoning : undefined;
   const nested = reasoning && typeof reasoning.effort === "string" ? reasoning.effort : undefined;
   const flat = typeof standard.reasoning_effort === "string" ? standard.reasoning_effort : undefined;
   const effort = nested ?? flat;
-  const slug = tierSlugForEffort(effort, capabilities);
+
+  const defaultEffort = defaultEffortFor(capabilities);
+
+  const matchingTier = CHATGPT_WEB_UNIFIED_TIERS.find(tier => tier.slug === model);
+  if (matchingTier) {
+    if (effort !== undefined) {
+      const effortTier = tierForEffort(effort);
+      if (effortTier.slug !== matchingTier.slug) {
+        throw new ConflictingTierError(model, effort);
+      }
+      if (effortTier.requiresPro && !capabilities.proAvailable) {
+        throw new TierUnavailableError(effortTier.slug);
+      }
+    }
+    if (matchingTier.requiresPro && !capabilities.proAvailable) {
+      throw new TierUnavailableError(matchingTier.slug);
+    }
+    return {
+      mapped: standard,
+      resolvedSlug: matchingTier.slug,
+      resolvedEffort: matchingTier.effort,
+    };
+  }
+
+  if (model === CHATGPT_WEB_LATEST_MODEL_ID) {
+    if (effort !== undefined) {
+      const effortTier = tierForEffort(effort);
+      if (effortTier.requiresPro && !capabilities.proAvailable) {
+        throw new TierUnavailableError(effortTier.slug);
+      }
+      return {
+        mapped: { ...standard, model: effortTier.slug },
+        resolvedSlug: effortTier.slug,
+        resolvedEffort: effortTier.effort,
+      };
+    }
+    const defaultSlug = tierSlugForEffort(undefined, capabilities);
+    return {
+      mapped: { ...standard, model: defaultSlug },
+      resolvedSlug: defaultSlug,
+      resolvedEffort: defaultEffort,
+    };
+  }
+
   return {
-    mapped: { ...standard, model: slug },
-    resolvedSlug: slug,
-    resolvedEffort: effort ?? CHATGPT_WEB_DEFAULT_TIER_EFFORT,
+    mapped: standard,
+    resolvedSlug: model,
+    resolvedEffort: defaultEffort,
   };
 }
+
 
 /** Client-visible unified model ids do not exist upstream; the advertised effort picks the concrete
  * upstream tier slug instead. Non-unified ids (already a tier slug) pass through.
@@ -609,7 +668,11 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             { status: 401 },
           );
         }
-        const capabilities = { solAvailable: config.solAvailable ?? true, proAvailable: config.proAvailable ?? true };
+        const effectiveHome = resolveUpstreamHome(config.upstreamHome);
+        const capabilities = resolveAccountCapabilities(effectiveHome, {
+          solAvailable: config.solAvailable,
+          proAvailable: config.proAvailable,
+        });
 
         // Resolve the tier before any upstream turn is opened: a request naming an unsupported
         // effort must fail loud, never be answered by a different tier than the client picked.
@@ -629,8 +692,33 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               { status: 400 },
             );
           }
+          if (error instanceof TierUnavailableError) {
+            return Response.json(
+              {
+                error: {
+                  message: error.message,
+                  type: "invalid_request_error",
+                  code: "tier_unavailable",
+                },
+              },
+              { status: 400 },
+            );
+          }
+          if (error instanceof ConflictingTierError) {
+            return Response.json(
+              {
+                error: {
+                  message: error.message,
+                  type: "invalid_request_error",
+                  code: "conflicting_tier",
+                },
+              },
+              { status: 400 },
+            );
+          }
           throw error;
         }
+
 
         let contextWindowHeaderValue: string | undefined;
         if (config.upstreamHome !== undefined) {
@@ -1180,12 +1268,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           );
         }
         const upstreamCatalog = await upstream.json().catch(() => undefined);
-        const capabilities = {
-          solAvailable: config.solAvailable ?? true,
-          proAvailable: config.proAvailable ?? true,
-        };
-        const derived = deriveTierWindows(upstreamCatalog, capabilities);
         const effectiveHome = resolveUpstreamHome(config.upstreamHome);
+        const capabilities = resolveAccountCapabilities(effectiveHome, {
+          solAvailable: config.solAvailable,
+          proAvailable: config.proAvailable,
+        });
+        const derived = deriveTierWindows(upstreamCatalog, capabilities);
         const biggerContext = readUpstreamBiggerContext(effectiveHome);
         const defaultTierWindow = derived.tiers[derived.latestEffort];
         const latestContextWindow = typeof defaultTierWindow?.context_window === "number"
@@ -1199,6 +1287,11 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           latest_context_window: latestContextWindow,
           source: derived.source,
           tiers: derived.tiers,
+          account: {
+            solAvailable: capabilities.solAvailable,
+            proAvailable: capabilities.proAvailable,
+            source: capabilities.source,
+          },
         });
       }
       if (req.method === "GET" && url.pathname === "/v1/models") {
@@ -1224,11 +1317,14 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           );
         }
         const upstreamCatalog = await upstream.json().catch(() => undefined);
-        const catalog = unifiedCatalog(upstreamCatalog, {
-          solAvailable: config.solAvailable ?? true,
-          proAvailable: config.proAvailable ?? true,
+        const effectiveHome = resolveUpstreamHome(config.upstreamHome);
+        const capabilities = resolveAccountCapabilities(effectiveHome, {
+          solAvailable: config.solAvailable,
+          proAvailable: config.proAvailable,
         });
+        const catalog = unifiedCatalog(upstreamCatalog, capabilities);
         return Response.json(catalog);
+
       }
       if (req.method === "GET" && url.pathname === "/healthz") {
         return Response.json({ status: lastError ? "degraded" : "ok", requests, ...(lastError ? { last_error: lastError } : {}) });

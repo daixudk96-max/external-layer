@@ -1,14 +1,19 @@
 {
   "version": 1,
   "testsRoot": "tests",
-  "digest": "e6c58755c40576b3b981af25cc24c97d0e3007137df5d6b8b835b93580364817",
-  "refCommit": "4a0e2e8f9fe50c1a9c0608988ce8b39c9bb80575",
+  "digest": "7819ff6e3457fda2492be8ff2ece8f637e3ed214fa082c1f6369006af4443397",
+  "refCommit": "f85054fa25d3d3482aafc304046827c088a52044",
   "entries": [
     {
-      "path": "w18-health-latch.test.ts",
-      "sha256": "b67ed8cc9bd2069eff15e1a7853f1c258c193ddb932d1ec38c4b99197cd953b2",
-      "size": 28810
+      "path": "w19-account-capabilities.test.ts",
+      "sha256": "10b37c6bc6cfa6be8260498d990518e44b15ea6d06b591c4f4b37762dcf79ea8",
+      "size": 31398
+    },
+    {
+      "path": "w20-capability-docs.test.ts",
+      "sha256": "b1b767e2c299fb5f39f89d3d454c8a0db570f3ac4e4a2160e61997d6f1e29803",
+      "size": 6038
     }
   ],
-  "createdAt": 1789150679331
+  "createdAt": 1789175037220
 }

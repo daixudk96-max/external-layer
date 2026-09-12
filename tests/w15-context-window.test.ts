@@ -184,7 +184,15 @@ test("A4 an account without Pro never sees a Pro window", async () => {
     const row = latestRowOf(await modelsBody(layer.baseUrl));
     const tiers = row.x_ext_layer_tier_windows as Record<string, Record<string, unknown>>;
     expect(Object.keys(tiers)).not.toContain("max");
-    expect(row.context_window).toBe(111_193); // the default tier (xhigh) is available without Pro
+    // AMENDED 2026-09-12 (task feat-09-12-account-capability-models, wave w19): the previous
+    // assertion here was `expect(row.context_window).toBe(111_193)` with the comment "the default
+    // tier (xhigh) is available without Pro". That premise was factually wrong: upstream marks the
+    // `extra-high` (xhigh) route `requiresPro: true` (ccw-upstream/src/chatgpt-web-models.ts:345-346),
+    // so on an account without Pro both xhigh and max are unavailable and the default tier falls back
+    // to `high` => 90_000. W19 supersedes the old expectation; see tests/w19-account-capabilities.test.ts.
+    expect(row.x_ext_layer_latest_effort).toBe("high");
+    expect(row.context_window).toBe(90_000);
+    expect(row.context_window).not.toBe(111_193); // xhigh is Pro-only: its window must not leak here
   } finally {
     layer.stop();
     up.stop();
@@ -322,7 +330,14 @@ test("A9 an unknown effort is still rejected, and the catalog shape is unchanged
 
     const listing = JSON.parse(await modelsBody(layer.baseUrl)) as { object?: string; data?: Array<{ id?: string }> };
     expect(listing.object).toBe("list");
-    expect(listing.data?.map(entry => entry.id)).toEqual(["chatgpt-web/latest"]);
+    // AMENDED 2026-09-12 (task feat-09-12-account-capability-models, wave w19): the pre-W19 shape was
+    // exactly `data === ["chatgpt-web/latest"]`. W19 deliberately advertises one row per tier the
+    // account can use — a client that discovers models from `data[].id` must be able to see them —
+    // so the shape guarantee is now "the unified id leads, and every listed id is a facade row".
+    const listed = (listing.data ?? []).map(entry => entry.id);
+    expect(listed[0]).toBe("chatgpt-web/latest");
+    expect(listed.length).toBeGreaterThanOrEqual(1);
+    expect(listed.every(id => typeof id === "string" && id.startsWith("chatgpt-web/"))).toBe(true);
   } finally {
     layer.stop();
     up.stop();

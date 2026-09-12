@@ -60,7 +60,7 @@ export const CHATGPT_WEB_UNIFIED_TIERS: readonly UnifiedTier[] = [
   { effort: "low", slug: "chatgpt-web/light", displayName: "ChatGPT Web — Light", requiresPro: false },
   { effort: "medium", slug: "chatgpt-web/medium", displayName: "ChatGPT Web — Medium", requiresPro: false },
   { effort: "high", slug: "chatgpt-web/high", displayName: "ChatGPT Web — High", requiresPro: false },
-  { effort: "xhigh", slug: "chatgpt-web/extra-high", displayName: "ChatGPT Web — Extra High", requiresPro: false },
+  { effort: "xhigh", slug: "chatgpt-web/extra-high", displayName: "ChatGPT Web — Extra High", requiresPro: true },
   { effort: "max", slug: "chatgpt-web/pro", displayName: "ChatGPT Web — Pro", requiresPro: true },
 ];
 
@@ -89,6 +89,21 @@ export class UnknownEffortError extends Error {
     this.name = "UnknownEffortError";
   }
 }
+
+export class TierUnavailableError extends Error {
+  constructor(slug: string) {
+    super(`ChatGPT Web tier "${slug}" is not available for this account`);
+    this.name = "TierUnavailableError";
+  }
+}
+
+export class ConflictingTierError extends Error {
+  constructor(model: string, effort: string) {
+    super(`model "${model}" conflicts with reasoning_effort "${effort}"`);
+    this.name = "ConflictingTierError";
+  }
+}
+
 
 function isObject(value: unknown): value is JsonObject {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -153,6 +168,10 @@ function modelTemplate(catalog: unknown): JsonObject {
   return template;
 }
 
+export function defaultEffortFor(capabilities: ModelCapabilities): string {
+  return capabilities.proAvailable ? CHATGPT_WEB_DEFAULT_TIER_EFFORT : "high";
+}
+
 export function deriveTierWindows(upstreamCatalog: unknown, capabilities: ModelCapabilities): {
   source: "upstream" | "unavailable";
   latestEffort: string;
@@ -167,6 +186,7 @@ export function deriveTierWindows(upstreamCatalog: unknown, capabilities: ModelC
     }
   >;
 } {
+  const defaultEffort = defaultEffortFor(capabilities);
   const rows = upstreamRows(upstreamCatalog);
   const hasWebRow = rows.some(row => {
     const slug = rowSlug(row);
@@ -175,7 +195,7 @@ export function deriveTierWindows(upstreamCatalog: unknown, capabilities: ModelC
   if (!hasWebRow) {
     return {
       source: "unavailable",
-      latestEffort: CHATGPT_WEB_DEFAULT_TIER_EFFORT,
+      latestEffort: defaultEffort,
       tiers: {},
     };
   }
@@ -213,7 +233,7 @@ export function deriveTierWindows(upstreamCatalog: unknown, capabilities: ModelC
   }
   return {
     source: Object.keys(tiers).length > 0 ? "upstream" : "unavailable",
-    latestEffort: CHATGPT_WEB_DEFAULT_TIER_EFFORT,
+    latestEffort: defaultEffort,
     tiers,
   };
 }
@@ -248,14 +268,14 @@ function latestRow(
   derived: ReturnType<typeof deriveTierWindows>,
 ): JsonObject {
   const tiers = CHATGPT_WEB_UNIFIED_TIERS.filter(tier => !tier.requiresPro || capabilities.proAvailable);
-  const defaultTierWindow = derived.tiers[CHATGPT_WEB_DEFAULT_TIER_EFFORT];
+  const defaultTierWindow = derived.tiers[derived.latestEffort];
   const row: JsonObject = {
     ...webRow(template),
     slug: CHATGPT_WEB_LATEST_MODEL_ID,
     display_name: "ChatGPT Web — Latest",
     description: UNIFIED_DESCRIPTION,
     multi_agent_version: "v1",
-    default_reasoning_level: CHATGPT_WEB_DEFAULT_TIER_EFFORT,
+    default_reasoning_level: derived.latestEffort,
     supported_reasoning_levels: tiers.map(tier => reasoningLevel(template, tier.effort, tier.displayName)),
     x_ext_layer_latest_effort: derived.latestEffort,
     x_ext_layer_tier_windows: derived.tiers,
@@ -270,6 +290,25 @@ function latestRow(
     if (defaultTierWindow.auto_compact_token_limit !== undefined) {
       row.auto_compact_token_limit = defaultTierWindow.auto_compact_token_limit;
     }
+  }
+  return row;
+}
+
+function tierRow(template: JsonObject, upstreamRow: JsonObject, tier: UnifiedTier): JsonObject {
+  const row: JsonObject = {
+    ...webRow(template),
+    slug: tier.slug,
+    display_name: tier.displayName,
+    default_reasoning_level: tier.effort,
+    supported_reasoning_levels: [reasoningLevel(template, tier.effort, tier.displayName)],
+  };
+  if (upstreamRow.context_window !== undefined) row.context_window = upstreamRow.context_window;
+  if (upstreamRow.max_context_window !== undefined) row.max_context_window = upstreamRow.max_context_window;
+  if (upstreamRow.effective_context_window_percent !== undefined) {
+    row.effective_context_window_percent = upstreamRow.effective_context_window_percent;
+  }
+  if (upstreamRow.auto_compact_token_limit !== undefined) {
+    row.auto_compact_token_limit = upstreamRow.auto_compact_token_limit;
   }
   return row;
 }
@@ -300,9 +339,23 @@ function lunaRow(template: JsonObject, slug: string, displayName: string, descri
 export function unifiedCatalog(upstreamCatalog: unknown, capabilities: ModelCapabilities): UnifiedCatalog {
   const template = modelTemplate(upstreamCatalog);
   const derived = deriveTierWindows(upstreamCatalog, capabilities);
-  const models = capabilities.solAvailable
-    ? [latestRow(template, capabilities, derived)]
-    : [
+  const rows = upstreamRows(upstreamCatalog);
+  let models: JsonObject[];
+  if (capabilities.solAvailable) {
+    const latest = latestRow(template, capabilities, derived);
+    const tierRows: JsonObject[] = [];
+    for (const tier of CHATGPT_WEB_UNIFIED_TIERS) {
+      if (tier.requiresPro && !capabilities.proAvailable) {
+        continue;
+      }
+      const upstreamRow = rows.find(candidate => rowSlug(candidate) === tier.slug);
+      if (upstreamRow) {
+        tierRows.push(tierRow(template, upstreamRow, tier));
+      }
+    }
+    models = [latest, ...tierRows];
+  } else {
+    models = [
       lunaRow(
         template,
         CHATGPT_WEB_LUNA_MODEL_ID,
@@ -316,12 +369,17 @@ export function unifiedCatalog(upstreamCatalog: unknown, capabilities: ModelCapa
         "ChatGPT Web Think for Luna-only accounts.",
       ),
     ];
+  }
   return {
     object: "list",
+    // Every advertised row is listed on the OpenAI `data[]` surface: standard clients discover
+    // models from `data[].id`, so advertising the per-tier rows only in `models[]` would keep them
+    // invisible to exactly the clients that need them (landing-owner fix, 2026-09-12, wave w19).
     data: models.map(model => ({ id: String(model.slug), object: "model" as const })),
     models,
   };
 }
+
 
 function defaultTier(): UnifiedTier {
   const tier = CHATGPT_WEB_UNIFIED_TIERS.find(candidate => candidate.effort === CHATGPT_WEB_DEFAULT_TIER_EFFORT);
@@ -336,22 +394,29 @@ function normalizeEffort(effort: string | undefined): string | undefined {
   return EFFORT_ALIASES[normalized] ?? normalized;
 }
 
+export function tierForEffort(effort: string): UnifiedTier {
+  const normalized = normalizeEffort(effort);
+  const tier = CHATGPT_WEB_UNIFIED_TIERS.find(candidate => candidate.effort === normalized);
+  if (!tier) throw new UnknownEffortError(normalized ?? effort);
+  return tier;
+}
+
 /**
  * Map a request's `reasoning_effort` onto the upstream tier slug.
  *
- * Unknown or missing efforts fall back to Extra High (the unified default), and `max` (the Pro
- * tier, a fundamentally different root model) clamps to Extra High on accounts without Pro rather
- * than routing to a tier the account cannot select. The mapping itself stays total: it is the
- * request path's job to reject models the catalog never advertised.
+ * Unknown or missing efforts fall back to the account default tier.
  */
 export function tierSlugForEffort(effort: string | undefined, capabilities: ModelCapabilities): string {
   const normalized = normalizeEffort(effort);
+  const defaultEffort = defaultEffortFor(capabilities);
   const tier = normalized === undefined
-    ? defaultTier()
+    ? CHATGPT_WEB_UNIFIED_TIERS.find(candidate => candidate.effort === defaultEffort)
     : CHATGPT_WEB_UNIFIED_TIERS.find(candidate => candidate.effort === normalized);
-  // Silently downgrading an unrecognised effort would serve a different tier than the client
-  // asked for (e.g. a typo'd "max" answering with Extra High) - fail loud instead.
   if (!tier) throw new UnknownEffortError(normalized as string);
-  if (tier.requiresPro && !capabilities.proAvailable) return defaultTier().slug;
+  if (tier.requiresPro && !capabilities.proAvailable) {
+    throw new TierUnavailableError(tier.slug);
+  }
   return tier.slug;
 }
+
+
