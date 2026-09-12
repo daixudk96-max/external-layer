@@ -22,7 +22,22 @@ export function resolveStallTimeoutSec(configuredSec: number | undefined): numbe
   return DEFAULT_STALL_TIMEOUT_SEC;
 }
 
-export type UpstreamStallKind = "first_byte" | "stream_stall";
+export const DEFAULT_PROGRESS_TIMEOUT_MS = 420_000;
+export const MAX_PROGRESS_TIMEOUT_MS = 3_600_000;
+
+/**
+ * Resolve the effective progress timeout for a turn producing no content-bearing frame.
+ * - non-finite or <= 0 -> DEFAULT_PROGRESS_TIMEOUT_MS
+ * - otherwise clamped to min(configured, MAX_PROGRESS_TIMEOUT_MS)
+ */
+export function resolveProgressTimeoutMs(configured?: number): number {
+  if (typeof configured === "number" && Number.isFinite(configured) && configured > 0) {
+    return Math.min(configured, MAX_PROGRESS_TIMEOUT_MS);
+  }
+  return DEFAULT_PROGRESS_TIMEOUT_MS;
+}
+
+export type UpstreamStallKind = "first_byte" | "stream_stall" | "no_progress";
 
 /**
  * 结构化上游停滞错误，用以区分「首字节超时（可重试）」与「流内静默超时（不可重试）」。

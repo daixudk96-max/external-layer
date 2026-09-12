@@ -12,6 +12,9 @@ const stallTimeoutSec = process.env.EXT_LAYER_STALL_SEC !== undefined
 const firstByteTimeoutMs = process.env.EXT_LAYER_FIRST_BYTE_MS !== undefined
   ? Number(process.env.EXT_LAYER_FIRST_BYTE_MS)
   : undefined;
+const progressTimeoutMs = process.env.EXT_LAYER_PROGRESS_MS !== undefined
+  ? Number(process.env.EXT_LAYER_PROGRESS_MS)
+  : undefined;
 
 const defaultEnvironment = {
   cwd: process.env.EXT_LAYER_CWD ?? "E:/github/chatgpt-web-2-api",
@@ -43,6 +46,7 @@ const layer = await startExternalLayer({
   statePath,
   stallTimeoutSec,
   firstByteTimeoutMs,
+  progressTimeoutMs,
   upstreamHome,
 });
 

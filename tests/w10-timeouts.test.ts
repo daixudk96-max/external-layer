@@ -198,7 +198,13 @@ test("A5: mid-stream silence terminates without hanging and does not poison idem
 
   const upstream = Bun.serve({
     port: 0,
-    async fetch() {
+    async fetch(req) {
+      // AMENDED 2026-09-12 (wave w22-interrupt-on-stall): a stalled turn is now also cancelled
+      // through the upstream admin route. That cancel is not a generation call, so it must not
+      // be counted here — the assertions below are about generation attempts reaching upstream.
+      if (new URL(req.url).pathname === "/admin/interrupt-turn") {
+        return Response.json({ ok: true });
+      }
       calls += 1;
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {

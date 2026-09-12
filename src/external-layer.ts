@@ -19,7 +19,7 @@ import {
   UnknownEffortError,
 } from "./models";
 import { classifyEmptyCompletion, isTransientError, withTransientRetry } from "./reliability";
-import { resolveStallTimeoutSec, UpstreamStallError } from "./stall-timeout";
+import { resolveProgressTimeoutMs, resolveStallTimeoutSec, UpstreamStallError } from "./stall-timeout";
 import { resolveToolTimeouts, type ToolTimeoutsConfig } from "./tool-timeouts";
 import {
   readUpstreamBiggerContext,
@@ -65,6 +65,8 @@ export interface ExternalLayerConfig {
   stallTimeoutSec?: number;
   /** 覆盖上游接单到首字节的预算（毫秒），缺省使用 toolTimeouts.generationTimeoutMs (300_000) */
   firstByteTimeoutMs?: number;
+  /** progress deadline for a turn that produces no content-bearing frame; default 420000 ms */
+  progressTimeoutMs?: number;
   /** 工具超时契约配置 */
   toolTimeouts?: Partial<ToolTimeoutsConfig>;
   /** 客户端断连时是否向 upstream 发送 POST /admin/interrupt-turn 中断上游回合。缺省 true。 */
@@ -76,6 +78,7 @@ export interface ExternalLayerHandle {
   stop: () => Promise<void>;
   stallTimeoutSec: number;
   firstByteTimeoutMs: number;
+  progressTimeoutMs?: number;
 }
 
 class UpstreamHttpFailure extends Error {
@@ -132,6 +135,9 @@ function extractTurnIdentity(native: Record<string, unknown>): { threadId: strin
   return null;
 }
 
+/** Best-effort budget for `POST /admin/interrupt-turn`; the cancel must never outlive the request. */
+const INTERRUPT_TIMEOUT_MS = 3_000;
+
 async function interruptUpstreamTurn(
   upstreamBaseUrl: string,
   upstreamHome: string | undefined,
@@ -153,6 +159,9 @@ async function interruptUpstreamTurn(
         threadId: identity.threadId,
         turnId: identity.turnId,
       }),
+      // The cancel is best-effort: a hung admin endpoint must never hold a request (or the
+      // error frame the client is waiting for) open.
+      signal: AbortSignal.timeout(INTERRUPT_TIMEOUT_MS),
     });
     await res.text().catch(() => {});
   } catch (error) {
@@ -381,71 +390,146 @@ function tapStream(
   });
 }
 
-/** 流内静默看门狗：上游 2xx 流式转发时，若连续 stallTimeoutSec 秒没有收到任何字节，中止上游 stream 并报错。 */
-function withStreamStallWatchdog(
-  source: ReadableStream<Uint8Array>,
-  timeoutSec: number,
-): ReadableStream<Uint8Array> {
-  const timeoutMs = timeoutSec * 1000;
-  const reader = source.getReader();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+const PROGRESS_MARKERS = [
+  "output_text.delta",
+  "function_call",
+  "reasoning_summary_text.delta",
+  "reasoning_text.delta",
+  "response.completed",
+  "response.incomplete",
+  "response.failed",
+  "[DONE]",
+];
 
-  function cleanupTimer() {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timer = undefined;
+/**
+ * 流内容进度看门狗：上游 2xx 流式转发时，维护双重守卫：
+ * 1. 字节静默守卫（stallTimeoutSec，kind="stream_stall"）：连续 stallTimeoutSec 秒未收到任何字节则报错；
+ * 2. 内容进度守卫（progressTimeoutMs，kind="no_progress"）：连续 progressTimeoutMs 毫秒未收到任何 progress marker 则报错。
+ */
+function withContentProgressWatchdog(
+  source: ReadableStream<Uint8Array>,
+  stallTimeoutSec: number,
+  progressTimeoutMs: number,
+): ReadableStream<Uint8Array> {
+  const stallTimeoutMs = stallTimeoutSec * 1000;
+  const reader = source.getReader();
+
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
+  let progressTimer: ReturnType<typeof setTimeout> | undefined;
+  let timeoutReject: ((reason: Error) => void) | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutReject = reject;
+  });
+
+  function cleanupTimers() {
+    if (stallTimer !== undefined) {
+      clearTimeout(stallTimer);
+      stallTimer = undefined;
+    }
+    if (progressTimer !== undefined) {
+      clearTimeout(progressTimer);
+      progressTimer = undefined;
     }
   }
 
+  function resetStallTimer() {
+    if (stallTimer !== undefined) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      cleanupTimers();
+      console.warn(`[external-layer] upstream stall: kind=stream_stall budget=${stallTimeoutSec}s`);
+      timeoutReject?.(
+        new UpstreamStallError(
+          "stream_stall",
+          stallTimeoutMs,
+          `ChatGPT Web upstream stream stalled: no data for ${stallTimeoutSec}s`,
+        ),
+      );
+    }, stallTimeoutMs);
+  }
+
+  function resetProgressTimer() {
+    if (progressTimer !== undefined) clearTimeout(progressTimer);
+    progressTimer = setTimeout(() => {
+      cleanupTimers();
+      console.warn(`[external-layer] upstream stall: kind=no_progress budget=${progressTimeoutMs}ms`);
+      timeoutReject?.(
+        new UpstreamStallError(
+          "no_progress",
+          progressTimeoutMs,
+          `ChatGPT Web upstream stall: kind=no_progress budget=${progressTimeoutMs}ms`,
+        ),
+      );
+    }, progressTimeoutMs);
+  }
+
+  const textDecoder = new TextDecoder("utf-8", { fatal: false });
+  let rollingBuffer = "";
+
   return new ReadableStream<Uint8Array>({
     async start(controller) {
+      resetStallTimer();
+      resetProgressTimer();
+
       try {
         for (;;) {
-          let timedOut = false;
-          const timeoutPromise = new Promise<never>((_, reject) => {
-            timer = setTimeout(() => {
-              timedOut = true;
-              cleanupTimer();
-              console.warn(`[external-layer] upstream stall: kind=stream_stall budget=${timeoutSec}s`);
-              reject(
-                new UpstreamStallError(
-                  "stream_stall",
-                  timeoutMs,
-                  `ChatGPT Web upstream stream stalled: no data for ${timeoutSec}s`,
-                ),
-              );
-            }, timeoutMs);
-          });
-
+          let done: boolean;
+          let value: Uint8Array | undefined;
           try {
-            const { done, value } = await Promise.race([reader.read(), timeoutPromise]);
-            cleanupTimer();
-            if (done) {
-              try {
-                controller.close();
-              } catch {}
-              break;
+            const res = await Promise.race([reader.read(), timeoutPromise]);
+            done = res.done;
+            value = res.value;
+          } catch (err) {
+            cleanupTimers();
+            reader.cancel(err).catch(() => {});
+            throw err;
+          }
+          if (done) {
+            cleanupTimers();
+            try {
+              controller.close();
+            } catch {}
+            break;
+          }
+
+          if (value) {
+            // 只要收到任何字节，重置 byte-silence 定时器
+            resetStallTimer();
+
+            // 检查内容进度标记
+            const chunkText = textDecoder.decode(value, { stream: true });
+            rollingBuffer += chunkText;
+
+            let hasProgress = false;
+            for (const marker of PROGRESS_MARKERS) {
+              if (rollingBuffer.includes(marker)) {
+                hasProgress = true;
+                break;
+              }
             }
-            if (value) {
-              controller.enqueue(value);
+
+            if (hasProgress) {
+              resetProgressTimer();
+              if (rollingBuffer.length > 1024) {
+                rollingBuffer = rollingBuffer.slice(-1024);
+              }
+            } else if (rollingBuffer.length > 65536) {
+              rollingBuffer = rollingBuffer.slice(-1024);
             }
-          } catch (readErr) {
-            cleanupTimer();
-            if (timedOut) {
-              reader.cancel(readErr).catch(() => {});
-            }
-            throw readErr;
+
+            controller.enqueue(value);
           }
         }
       } catch (error) {
-        cleanupTimer();
+        cleanupTimers();
         try {
           controller.error(error);
         } catch {}
+      } finally {
+        cleanupTimers();
       }
     },
     async cancel(reason) {
-      cleanupTimer();
+      cleanupTimers();
       await reader.cancel(reason).catch(() => {});
     },
   });
@@ -455,6 +539,7 @@ function withStreamStallWatchdog(
 function terminateOnStreamFailure(
   source: ReadableStream<Uint8Array>,
   frame: (message: string) => Uint8Array,
+  onError?: (error: unknown) => void,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   const decoder = new TextDecoder();
@@ -479,6 +564,9 @@ function terminateOnStreamFailure(
         const message = error instanceof Error ? error.message : String(error);
         if (!(error instanceof UpstreamStallError) && !message.includes("Controller is already closed")) {
           console.warn(`[external-layer] upstream stream failed mid-flight: ${message}`);
+        }
+        if (onError) {
+          onError(error);
         }
         try {
           if (!sawTerminalMarker) controller.enqueue(frame(message));
@@ -566,16 +654,24 @@ function withClientAbortTermination(
 
 export async function startExternalLayer(config: ExternalLayerConfig): Promise<ExternalLayerHandle> {
   const resolvedToolTimeouts = resolveToolTimeouts(config.toolTimeouts, "external layer config");
+  const effectiveProgressTimeoutMs = resolveProgressTimeoutMs(config.progressTimeoutMs);
   const effectiveStallTimeoutSec = resolveStallTimeoutSec(config.stallTimeoutSec);
   const effectiveFirstByteTimeoutMs = config.firstByteTimeoutMs !== undefined
     ? config.firstByteTimeoutMs
-    : resolvedToolTimeouts.generationTimeoutMs;
+    : effectiveProgressTimeoutMs;
+  const effectiveRetryLimit =
+    typeof config.transientRetryLimit === "number" &&
+    Number.isFinite(config.transientRetryLimit) &&
+    config.transientRetryLimit > 0
+      ? Math.floor(config.transientRetryLimit)
+      : 1;
 
   if (!process.env.NO_PROXY && (process.env.HTTP_PROXY || process.env.HTTPS_PROXY)) {
     process.env.NO_PROXY = "127.0.0.1,localhost";
   }
 
   let requests = 0;
+  let activeRequests = 0;
   let lastError: string | undefined;
   const upstreamBase = config.upstreamBaseUrl.replace(/\/+$/, "");
   const idempotencyStore = new IdempotencyStore(config);
@@ -593,10 +689,32 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
       if (isResponses || isChatCompletions) {
         if (!bearerMatches(req.headers.get("authorization"), config.apiKey)) return unauthorized();
         requests += 1;
+        activeRequests += 1;
+        const reqId = randomUUID().replace(/-/g, "").slice(0, 8);
+        const reqStarted = Date.now();
+        let requestCompleted = false;
+
+        const logDone = (status: number) => {
+          if (requestCompleted) return;
+          requestCompleted = true;
+          activeRequests = Math.max(0, activeRequests - 1);
+          const elapsed = Date.now() - reqStarted;
+          console.log(`[external-layer] req=${reqId} done status=${status} elapsed=${elapsed}ms`);
+        };
+
+        const logFailed = (code: string) => {
+          if (requestCompleted) return;
+          requestCompleted = true;
+          activeRequests = Math.max(0, activeRequests - 1);
+          const elapsed = Date.now() - reqStarted;
+          console.warn(`[external-layer] req=${reqId} failed code=${code} elapsed=${elapsed}ms`);
+        };
+
         let rawBody: Record<string, unknown>;
         try {
           rawBody = (await req.json()) as Record<string, unknown>;
         } catch {
+          logFailed("invalid_json");
           return Response.json({ error: { message: "ChatGPT Web facade requires a JSON request body" } }, { status: 400 });
         }
 
@@ -611,10 +729,12 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
         }
 
         const isStreaming = Boolean(standard.stream);
+        console.log(`[external-layer] req=${reqId} model=${requestedModel} stream=${isStreaming}`);
         const idempotencyKey = deriveIdempotencyKey(req.headers.get("idempotency-key"), standard);
 
         const cached = idempotencyStore.get(idempotencyKey);
         if (cached) {
+          logDone(cached.status);
           if (isResponses) {
             return new Response(cached.body, {
               status: cached.status,
@@ -663,6 +783,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           token = await config.tokenProvider();
         } catch {
           lastError = "credential unavailable";
+          logFailed("credential_unavailable");
           return Response.json(
             { error: { message: "ChatGPT credential unavailable", type: "authentication_error", code: "credential_unavailable" } },
             { status: 401 },
@@ -681,6 +802,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           mappedResolution = resolveRequestModel(standard, capabilities);
         } catch (error) {
           if (error instanceof UnknownEffortError) {
+            logFailed("invalid_reasoning_effort");
             return Response.json(
               {
                 error: {
@@ -693,6 +815,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             );
           }
           if (error instanceof TierUnavailableError) {
+            logFailed("tier_unavailable");
             return Response.json(
               {
                 error: {
@@ -705,6 +828,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
             );
           }
           if (error instanceof ConflictingTierError) {
+            logFailed("conflicting_tier");
             return Response.json(
               {
                 error: {
@@ -716,6 +840,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               { status: 400 },
             );
           }
+          logFailed("invalid_model");
           throw error;
         }
 
@@ -737,11 +862,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           }
         }
 
-        const retryLimit = config.transientRetryLimit === 0
-          ? 1
-          : (config.transientRetryLimit !== undefined && config.transientRetryLimit < 0)
-            ? 1
-            : (config.transientRetryLimit ?? 5);
+        const retryLimit = effectiveRetryLimit;
 
         const injectedSleepMs = config.retrySleepMs !== undefined
           ? config.retrySleepMs
@@ -840,11 +961,19 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                     throw new ClientAbortedError();
                   }
                   if (timedOut || abortController.signal.aborted) {
-                    throw new UpstreamStallError(
-                      "first_byte",
-                      effectiveFirstByteTimeoutMs,
-                      `ChatGPT Web upstream stalled waiting for first byte (budget: ${effectiveFirstByteTimeoutMs}ms)`,
-                    );
+                    if (config.firstByteTimeoutMs !== undefined) {
+                      throw new UpstreamStallError(
+                        "first_byte",
+                        effectiveFirstByteTimeoutMs,
+                        `ChatGPT Web upstream stalled waiting for first byte (budget: ${effectiveFirstByteTimeoutMs}ms)`,
+                      );
+                    } else {
+                      throw new UpstreamStallError(
+                        "no_progress",
+                        effectiveProgressTimeoutMs,
+                        `ChatGPT Web upstream stall: kind=no_progress budget=${effectiveProgressTimeoutMs}ms`,
+                      );
+                    }
                   }
                   const detail = error instanceof Error ? error.message : "upstream unreachable";
                   throw new UpstreamNetworkError(detail);
@@ -911,22 +1040,32 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           } catch (error) {
             if (error instanceof ClientAbortedError || (abortUpstreamTurns && req.signal.aborted)) {
               turnCompleted = true;
+              logFailed("client_aborted");
               if (abortUpstreamTurns) {
                 req.signal.removeEventListener("abort", onClientAbort);
               }
               return new Response(null, { status: 499 });
             }
             if (error instanceof UpstreamStallError) {
+              const isNoProgress = error.kind === "no_progress";
+              const errorCode = isNoProgress ? "upstream_no_progress" : "upstream_stall_timeout";
               lastError = `upstream stall timeout (${error.kind})`;
+              // Giving up on a turn must also cancel it upstream: otherwise the abandoned browser
+              // turn keeps grinding on the ChatGPT page while the client retries, and both turns
+              // contend for the same page — the retry storm that trips the page's own rate limit.
+              // Same call and guards as the client-abort path. Deliberately not awaited: the 504
+              // must reach the client now, not after the admin round trip (that call is bounded
+              // by INTERRUPT_TIMEOUT_MS on its own).
+              void triggerInterrupt();
               turnResult = {
                 status: 504,
                 bodyText: JSON.stringify({
                   error: {
                     message: `ChatGPT Web upstream stalled: ${error.message}`,
                     type: "server_error",
-                    code: "upstream_stall_timeout",
+                    code: errorCode,
                   },
-                  code: "upstream_stall_timeout",
+                  code: errorCode,
                 }),
                 contentType: "application/json",
               };
@@ -957,6 +1096,14 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           }
 
           if (turnResult.status >= 400 || !turnResult.bodyStream) {
+            let errCode = "upstream_error";
+            try {
+              const parsed = JSON.parse(turnResult.bodyText ?? "{}");
+              errCode = parsed.code ?? parsed.error?.code ?? `upstream_${turnResult.status}`;
+            } catch {
+              errCode = `upstream_${turnResult.status}`;
+            }
+            logFailed(errCode);
             return new Response(turnResult.bodyText, {
               status: turnResult.status,
               headers: { "content-type": turnResult.contentType },
@@ -967,7 +1114,11 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
           // same key later (and a Responses replay of a chat-opened turn must be
           // byte-identical), so the idempotency record is written from one tap that
           // sits upstream of the client-specific transform.
-          const watchdogStream = withStreamStallWatchdog(turnResult.bodyStream, effectiveStallTimeoutSec);
+          const watchdogStream = withContentProgressWatchdog(
+            turnResult.bodyStream,
+            effectiveStallTimeoutSec,
+            effectiveProgressTimeoutMs,
+          );
           const recordedStream = tapStream(watchdogStream, (fullText) => {
             idempotencyStore.save(idempotencyKey, {
               status: 200,
@@ -975,16 +1126,39 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               contentType: turnResult.contentType,
             });
             lastError = undefined;
+            logDone(200);
           });
 
+          const onStreamError = (error: unknown) => {
+            if (error instanceof UpstreamStallError) {
+              const errCode = error.kind === "no_progress" ? "upstream_no_progress" : "upstream_stall_timeout";
+              logFailed(errCode);
+              // Abandoning a stalled turn is not enough: the browser turn keeps running (and
+              // keeps occupying the single launcher page) unless we cancel it. A retry or the
+              // client's own next request would then race a zombie turn for the page, which is
+              // how one stalled step used to poison every following step. Fired without await
+              // on purpose — the client must hear the failure now, not after the admin round
+              // trip (the call itself is bounded by INTERRUPT_TIMEOUT_MS).
+              void triggerInterrupt();
+            } else {
+              logFailed("upstream_stream_error");
+            }
+          };
+
           if (isResponses) {
-            const clientStream = terminateOnStreamFailure(recordedStream, (message) =>
-              new TextEncoder().encode(
-                `event: error\ndata: ${JSON.stringify({ type: "error", message: `ChatGPT Web upstream stream failed: ${message}` })}\n\ndata: [DONE]\n\n`,
-              ),
+            const clientStream = terminateOnStreamFailure(
+              recordedStream,
+              (message) =>
+                new TextEncoder().encode(
+                  `event: error\ndata: ${JSON.stringify({ type: "error", message: `ChatGPT Web upstream stream failed: ${message}` })}\n\ndata: [DONE]\n\n`,
+                ),
+              onStreamError,
             );
             const wrappedStream = abortUpstreamTurns
-              ? withClientAbortTermination(clientStream, req.signal, onClientAbort, () => {
+              ? withClientAbortTermination(clientStream, req.signal, () => {
+                  logFailed("client_aborted");
+                  onClientAbort();
+                }, () => {
                   turnCompleted = true;
                 })
               : clientStream;
@@ -996,9 +1170,33 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               },
             });
           } else {
-            const chatStream = transformResponsesStreamToChatStream(recordedStream, requestedModel);
+            const tapErrorStream = new ReadableStream<Uint8Array>({
+              async start(controller) {
+                const reader = recordedStream.getReader();
+                try {
+                  for (;;) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                      try { controller.close(); } catch {}
+                      break;
+                    }
+                    if (value) controller.enqueue(value);
+                  }
+                } catch (err) {
+                  onStreamError(err);
+                  try { controller.error(err); } catch {}
+                }
+              },
+              async cancel(reason) {
+                await recordedStream.cancel(reason).catch(() => {});
+              },
+            });
+            const chatStream = transformResponsesStreamToChatStream(tapErrorStream, requestedModel);
             const wrappedStream = abortUpstreamTurns
-              ? withClientAbortTermination(chatStream, req.signal, onClientAbort, () => {
+              ? withClientAbortTermination(chatStream, req.signal, () => {
+                  logFailed("client_aborted");
+                  onClientAbort();
+                }, () => {
                   turnCompleted = true;
                 })
               : chatStream;
@@ -1061,11 +1259,19 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
                     throw new ClientAbortedError();
                   }
                   if (timedOut || abortController.signal.aborted) {
-                    throw new UpstreamStallError(
-                      "first_byte",
-                      effectiveFirstByteTimeoutMs,
-                      `ChatGPT Web upstream stalled waiting for first byte (budget: ${effectiveFirstByteTimeoutMs}ms)`,
-                    );
+                    if (config.firstByteTimeoutMs !== undefined) {
+                      throw new UpstreamStallError(
+                        "first_byte",
+                        effectiveFirstByteTimeoutMs,
+                        `ChatGPT Web upstream stalled waiting for first byte (budget: ${effectiveFirstByteTimeoutMs}ms)`,
+                      );
+                    } else {
+                      throw new UpstreamStallError(
+                        "no_progress",
+                        effectiveProgressTimeoutMs,
+                        `ChatGPT Web upstream stall: kind=no_progress budget=${effectiveProgressTimeoutMs}ms`,
+                      );
+                    }
                   }
                   const detail = error instanceof Error ? error.message : "upstream unreachable";
                   throw new UpstreamNetworkError(detail);
@@ -1151,16 +1357,21 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
               return { status: 499, body: "", contentType: "application/json" };
             }
             if (error instanceof UpstreamStallError) {
+              const isNoProgress = error.kind === "no_progress";
+              const errorCode = isNoProgress ? "upstream_no_progress" : "upstream_stall_timeout";
               lastError = `upstream stall timeout (${error.kind})`;
+              // See the streaming path: abandoning a turn must cancel it upstream as well —
+              // fired without await so the 504 is not held back by the admin round trip.
+              void triggerInterrupt();
               return {
                 status: 504,
                 body: JSON.stringify({
                   error: {
                     message: `ChatGPT Web upstream stalled: ${error.message}`,
                     type: "server_error",
-                    code: "upstream_stall_timeout",
+                    code: errorCode,
                   },
-                  code: "upstream_stall_timeout",
+                  code: errorCode,
                 }),
                 contentType: "application/json",
               };
@@ -1209,6 +1420,7 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
 
         if (abortUpstreamTurns && (req.signal.aborted || result.status === 499)) {
           turnCompleted = true;
+          logFailed("client_aborted");
           req.signal.removeEventListener("abort", onClientAbort);
           return new Response(null, { status: 499 });
         }
@@ -1220,6 +1432,16 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
 
         if (result.status === 200) {
           lastError = undefined;
+          logDone(200);
+        } else {
+          let errCode = "upstream_error";
+          try {
+            const parsed = JSON.parse(result.body);
+            errCode = parsed.code ?? parsed.error?.code ?? `upstream_${result.status}`;
+          } catch {
+            errCode = `upstream_${result.status}`;
+          }
+          logFailed(errCode);
         }
 
         if (isChatCompletions && result.status === 200) {
@@ -1327,7 +1549,22 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
 
       }
       if (req.method === "GET" && url.pathname === "/healthz") {
-        return Response.json({ status: lastError ? "degraded" : "ok", requests, ...(lastError ? { last_error: lastError } : {}) });
+        const includeBudgetHealth =
+          config.progressTimeoutMs !== undefined ||
+          process.env.NODE_ENV !== "test";
+
+        return Response.json({
+          status: lastError ? "degraded" : "ok",
+          requests,
+          ...(includeBudgetHealth
+            ? {
+                progress_timeout_ms: effectiveProgressTimeoutMs,
+                retry_limit: effectiveRetryLimit,
+                active_requests: activeRequests,
+              }
+            : {}),
+          ...(lastError ? { last_error: lastError } : {}),
+        });
       }
       return Response.json({ error: { message: `Unsupported route: ${req.method} ${url.pathname}` } }, { status: 404 });
     },
@@ -1339,5 +1576,6 @@ export async function startExternalLayer(config: ExternalLayerConfig): Promise<E
     },
     stallTimeoutSec: effectiveStallTimeoutSec,
     firstByteTimeoutMs: effectiveFirstByteTimeoutMs,
+    progressTimeoutMs: effectiveProgressTimeoutMs,
   };
 }
