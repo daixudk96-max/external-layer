@@ -95,8 +95,10 @@ const nonNavEarlyFailScript = () => ({
 });
 
 interface StreamScript {
-  frames: string[];
+  frames?: string[];
   chunkDelayMs?: number;
+  /** Raw chunks enqueued verbatim (an SSE frame split across network chunks); wins over frames. */
+  rawChunks?: string[];
 }
 
 interface TurnIdentity {
@@ -153,7 +155,8 @@ function upstream(script: (callIndex: number) => StreamScript) {
         const plan = script(responsesCalls - 1);
         const stream = new ReadableStream<Uint8Array>({
           async start(controller) {
-            for (const frameText of plan.frames) {
+            const chunks = plan.rawChunks ?? plan.frames ?? [];
+            for (const frameText of chunks) {
               if (plan.chunkDelayMs) await Bun.sleep(plan.chunkDelayMs);
               try {
                 controller.enqueue(encoder.encode(frameText));
@@ -421,5 +424,40 @@ test("A10: the w25 HTTP-level nav retry still fires for non-streaming turns", as
   } finally {
     await layer.stop();
     server.stop(true);
+  }
+}, 20000);
+// AMENDED 2026-09-12 (real machine, trace d75de6825145, facade req=0430371d): the upstream
+// delivers SSE frames in arbitrary network chunks, and the 20:59 `page.goto:
+// net::ERR_SSL_PROTOCOL_ERROR` failure was relayed to the client after a SINGLE upstream
+// attempt (facade log "done status=200 elapsed=2062ms", zero `nav retry` lines) even though
+// A1 proves the same failure whole-frame is retried. Root cause: classifySseHead decided on
+// an INCOMPLETE trailing line — the failed data line arrived split mid-JSON, JSON.parse
+// failed, and the fallback message (partial text, no "net::err_") was judged non-nav.
+test("A11: a failure frame split across network chunks still retries (an incomplete line never decides)", async () => {
+  const up = upstream((call) => {
+    if (call !== 0) return healthyScript();
+    // Split the failure frame mid-JSON of its data line, like a real chunk boundary would.
+    const failed = failedFrame(NAV_MSG);
+    const cut = failed.indexOf('"type"') + 12;
+    return {
+      rawChunks: [createdFrame("resp_split_w26"), failed.slice(0, cut), failed.slice(cut), DONE],
+      chunkDelayMs: 60,
+    };
+  });
+  const layer = await boot(up.url);
+  try {
+    const { status, text } = await streamTurn(layer.baseUrl, turnBody("a11"));
+    expect(status).toBe(200);
+    // The split failure attempt is retried invisibly; the client sees only the healthy turn.
+    expect(up.responsesCalls()).toBe(2);
+    expect(up.turns[0].threadId).toBe(up.turns[1].threadId);
+    expect(up.turns[0].turnId).not.toBe(up.turns[1].turnId);
+    expect(text).not.toContain("response.failed");
+    expect(text).not.toContain("net::ERR");
+    expect(text).toContain("OK-W26");
+    expect(text.trimEnd().endsWith("[DONE]")).toBe(true);
+  } finally {
+    await layer.stop();
+    up.stop();
   }
 }, 20000);

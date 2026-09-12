@@ -96,7 +96,12 @@ function classifyEvent(view: FrameView): HeadVerdict {
  *  once BOTH its event line and its data line arrived — the blank-line terminator is not
  *  required, because test mocks and some relays separate frames with a single newline. */
 export function classifySseHead(buffer: string): HeadVerdict {
-  const lines = buffer.split("\n");
+  // A trailing line without its terminating newline is STILL ARRIVING: its JSON is incomplete,
+  // so deciding on it would misclassify a failure as content or relay a nav failure un-retried
+  // (real machine 2026-09-12 20:59, trace d75de6825145: `page.goto: net::ERR_SSL_PROTOCOL_ERROR`
+  // relayed after a single attempt because the failed data line was split mid-JSON).
+  const complete = buffer.endsWith("\n") ? buffer : buffer.slice(0, buffer.lastIndexOf("\n") + 1);
+  const lines = complete.split("\n");
   let pendingEvent = "";
   for (const line of lines) {
     if (line.startsWith("event:")) {
