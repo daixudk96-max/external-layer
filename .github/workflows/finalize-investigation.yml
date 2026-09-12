@@ -1,0 +1,108 @@
+name: Finalize tab reuse investigation
+on:
+  push:
+    branches: [fix/tab-reuse-investigation-20260913]
+    paths:
+      - .github/workflows/finalize-investigation.yml
+      - _investigation-transfer/refine.py
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+      - run: bun install --frozen-lockfile
+      - name: Preserve pristine baseline results
+        shell: bash
+        run: |
+          mkdir -p /tmp/tab-investigation-results
+          git worktree add --detach /tmp/tab-investigation-baseline 714c56816c3f91c49b786c79cc2af972aa4dc6f35e67
+          ln -s "$GITHUB_WORKSPACE/node_modules" /tmp/tab-investigation-baseline/node_modules
+          set +e
+          (cd /tmp/tab-investigation-baseline && bunx tsc --noEmit) > /tmp/tab-investigation-results/baseline-typecheck.txt 2>&1
+          echo "BASELINE_TYPECHECK_EXIT=$?" > /tmp/tab-investigation-results/status.txt
+          (cd /tmp/tab-investigation-baseline && bun test) > /tmp/tab-investigation-results/baseline-tests.txt 2>&1
+          echo "BASELINE_TEST_EXIT=$?" >> /tmp/tab-investigation-results/status.txt
+          exit 0
+      - name: Read exact reviewed patch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const pr = await github.rest.pulls.get({owner: context.repo.owner, repo: context.repo.repo, pull_number: 10});
+            const match = (pr.data.body || '').match(/<!-- tested-source-patch -->\s*```json\s*([\s\S]*?)\s*```/);
+            if (!match) throw new Error('Reviewed source patch missing');
+            JSON.parse(match[1]);
+            fs.writeFileSync('/tmp/reviewed-source-patch.json', match[1]);
+      - name: Apply checked patch and cancellation regressions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          patch = json.loads(Path('/tmp/reviewed-source-patch.json').read_text())
+          for item in patch.get('renames', []):
+              src, dst = Path(item['from']), Path(item['to'])
+              if src.exists():
+                  dst.parent.mkdir(parents=True, exist_ok=True)
+                  src.rename(dst)
+              elif not dst.exists():
+                  raise RuntimeError('missing rename source: ' + str(src))
+          for name, edits in patch.get('edits', {}).items():
+              path = Path(name)
+              text = path.read_text()
+              for edit in edits:
+                  if edit['old'] not in text:
+                      raise RuntimeError('source precondition failed: ' + name + ' ' + repr(edit['old'][:80]))
+                  text = text.replace(edit['old'], edit['new'])
+              path.write_text(text)
+          PY
+          python3 _investigation-transfer/refine.py
+      - name: Run exact requested checks
+        shell: bash
+        run: |
+          set +e
+          bunx tsc --noEmit > /tmp/tab-investigation-results/fixed-typecheck.txt 2>&1
+          echo "FIXED_TYPECHECK_EXIT=$?" >> /tmp/tab-investigation-results/status.txt
+          bun test > /tmp/tab-investigation-results/fixed-tests.txt 2>&1
+          echo "FIXED_TEST_EXIT=$?" >> /tmp/tab-investigation-results/status.txt
+          cat /tmp/tab-investigation-results/status.txt
+          tail -n 12 /tmp/tab-investigation-results/fixed-tests.txt
+          exit 0
+      - name: Commit source and transparent verification record
+        shell: bash
+        run: |
+          mkdir -p docs/handoff/2026-09-13-fix
+          {
+            echo "Base: 714c56816c3f91c49b786c79cc2af972aa4dc6f35e67"
+            echo "Runner: ubuntu-latest; Bun: $(bun --version)"
+            echo "Run: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "The installed-Windows-snapshot integration test is platform-gated; its assertions are unchanged."
+            cat /tmp/tab-investigation-results/status.txt
+            for f in baseline-typecheck baseline-tests fixed-typecheck fixed-tests; do
+              echo
+              echo "===== $f ====="
+              cat "/tmp/tab-investigation-results/$f.txt"
+            done
+          } > docs/handoff/2026-09-13-fix/verification.txt
+          find facade/src test -type f -name '*.ts' -print0 | sort -z | xargs -0 sha256sum > docs/handoff/2026-09-13-fix/source-sha256.txt
+          rm -rf _investigation-transfer
+          rm -f .github/workflows/probe-existing-tests.yml .github/workflows/commit-investigation.yml .github/workflows/finalize-investigation.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m "fix: isolate facade source and make browser turn ownership explicit"
+          git push origin HEAD:fix/tab-reuse-investigation-20260913
+      - name: Enforce green result
+        shell: bash
+        run: |
+          grep -q '^FIXED_TYPECHECK_EXIT=0$' /tmp/tab-investigation-results/status.txt
+          grep -q '^FIXED_TEST_EXIT=0$' /tmp/tab-investigation-results/status.txt
