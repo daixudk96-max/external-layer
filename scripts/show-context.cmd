@@ -1,12 +1,12 @@
 @echo off
-rem One-command view of live context-window contract from external layer facade
-
-set EXT_LAYER_PORT=17843
-set EXT_LAYER_ENDPOINT=http://127.0.0.1:%EXT_LAYER_PORT%/v1/context
-
+setlocal
+rem One command view of the live context-window contract of the running facade.
+set "PORT=17843"
+if not "%EXT_LAYER_PORT%"=="" set "PORT=%EXT_LAYER_PORT%"
 if "%EXT_LAYER_API_KEY%"=="" (
-  set EXT_LAYER_API_KEY=sk-dsh-web-cdfedbd300cc0e0ac0b4cc0c4209cd2cadc5271e61f5c103
+  echo [show-context] set EXT_LAYER_API_KEY first (the key the layer printed at startup)
+  exit /b 1
 )
-
-curl.exe -s -H "Authorization: Bearer %EXT_LAYER_API_KEY%" "%EXT_LAYER_ENDPOINT%"
+curl.exe -s -H "Authorization: Bearer %EXT_LAYER_API_KEY%" "http://127.0.0.1:%PORT%/v1/context"
 echo.
+exit /b 0

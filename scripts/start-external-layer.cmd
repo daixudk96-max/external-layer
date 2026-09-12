@@ -1,27 +1,31 @@
 @echo off
-rem DSH external layer (standard Responses facade) - one-click idempotent start on port 17843
-set PORT=17843
-netstat -ano | findstr /C:":17843" | findstr /C:"LISTENING" >nul 2>&1
-if %errorlevel%==0 goto already
-echo [ext-layer] starting external layer on %PORT%...
-start "" /min cmd /c "cd /d E:\github\chatgpt-web-2-api\external-layer && set EXT_LAYER_PORT=%PORT% && bun run src/index.ts > C:\Users\daixu\AppData\Local\Temp\external-layer.log 2>&1"
+setlocal
+rem Start the external layer (standard Responses API facade) on port 17843.
+rem Portable: resolves the repo from this script location, needs bun on PATH.
+set "PORT=17843"
+if not "%EXT_LAYER_PORT%"=="" set "PORT=%EXT_LAYER_PORT%"
+set "ROOT=%~dp0.."
+
+netstat -ano | findstr /C:":%PORT%" | findstr /C:"LISTENING" >nul 2>&1
+if not errorlevel 1 goto already
+
+echo [ext-layer] starting on %PORT% from %ROOT%
+start "ext-layer" /min /d "%ROOT%" cmd /k "bun run src/index.ts"
+
 set /a tries=0
 :wait
-ping -n 3 127.0.0.1 >nul
-netstat -ano | findstr /C:":17843" | findstr /C:"LISTENING" >nul 2>&1
-if %errorlevel%==0 goto up
+ping -n 2 127.0.0.1 >nul
+netstat -ano | findstr /C:":%PORT%" | findstr /C:"LISTENING" >nul 2>&1
+if not errorlevel 1 goto up
 set /a tries+=1
-if %tries% GEQ 20 goto fail
-goto wait
-:up
-echo [ext-layer] endpoint UP: http://127.0.0.1:%PORT%/v1
-pause
-exit /b 0
-:already
-echo [ext-layer] already listening on %PORT% - nothing to do
-pause
-exit /b 0
-:fail
-echo [ext-layer] FAILED: see C:\Users\daixu\AppData\Local\Temp\external-layer.log
-pause
+if %tries% lss 15 goto wait
+echo [ext-layer] FAILED: nothing is listening on %PORT%; run bun run src/index.ts to see the error
 exit /b 1
+
+:up
+echo [ext-layer] UP on http://127.0.0.1:%PORT%/v1
+exit /b 0
+
+:already
+echo [ext-layer] already running on %PORT% - nothing to do
+exit /b 0

@@ -22,7 +22,7 @@
 - **17843 外接层（我们的代码）**：`healthz` HTTP 200，原始体 `{"status":"ok","requests":3}`；监听 `0.0.0.0:17843`，pid `29424`（`netstat -ano` 现场取证）。无 `last_error` 字段 ⇒ 未被降级。
 - **17842 上游（逐字节原始 upstream）**：`healthz` HTTP 200，原始体见下；pid `35556`，版本 `5.0.6`，`mode":"full"`，`accepting_turns":true`，`active_http_turns":0`，`active_browser_turns":0`。
 - **桌面壳 descriptor（浏览器宿主现场）**：`C:\Users\daixu\.codex-chatgpt-web-dev\runtime\launcher-browser.json`（**dev home** —— 见 `docs/dsh-endpoint-guide.md`，两条线共用一个浏览器宿主，descriptor 必须落在 dev home）。现场状态：`kind":"codex-web-gpt-launcher"`，`profile":"development"`，`pid":2720`，`surfaceId":"ZwvNai_NR3FDtWZU0XevQzbNqP8cDLBv"`，`partition":"persist:codex-web-gpt-dev-chatgpt"`，`createdAt":"2026-09-11T15:09:31.129Z"`；`control.token` 已脱敏，不入档。
-- **API key**：仓库文档化的**本地默认 dev key**（`src/index.ts` 的 `EXT_LAYER_API_KEY` 缺省值，形如 `sk-dsh-web-cdfe…`）。仅本地环回可用；本文件不引入任何其他凭据。
+- **API key**：仓库文档化的**本地默认 dev key**（`src/index.ts` 的 `EXT_LAYER_API_KEY` 缺省值，形如 `sk-ext-layer-<your-key>
 
 RAW — 17842 `/healthz`（窗口内两次取值，字段一致，仅 `uptime` 递增）：
 ```

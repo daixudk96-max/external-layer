@@ -1,13 +1,35 @@
 {
   "name": "external-layer",
   "version": "0.1.0",
-  "private": true,
+  "description": "Standard OpenAI Responses API facade in front of an unmodified codex-chatgpt-web upstream (unified model + reasoning_effort tiers, bounded retry, progress watchdog, idempotent replay, upstream-derived context windows, OAuth refresh).",
+  "license": "MIT",
   "type": "module",
-  "description": "DSH external layer: standard Responses API facade in front of the original codex-chatgpt-web upstream",
-  "scripts": {
-    "test": "bun test",
-    "typecheck": "bunx tsc --noEmit"
+  "private": false,
+  "engines": {
+    "bun": ">=1.1.0"
   },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
+    "test:live": "EXT_LAYER_LIVE=1 bun test tests/w13-equivalence.test.ts"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "docs",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ],
+  "keywords": [
+    "chatgpt",
+    "responses-api",
+    "openai",
+    "codex",
+    "proxy",
+    "facade"
+  ],
   "devDependencies": {
     "bun-types": "^1.3.0"
   }

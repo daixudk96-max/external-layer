@@ -9,7 +9,7 @@
 | Base URL | `http://127.0.0.1:17843/v1`（外接层；老线 17841 已退役） |
 | 对话端点 | `POST /v1/responses`（标准 Responses API）、`POST /v1/chat/completions` |
 | 模型列表 | `GET /v1/models`（OpenAI 标准格式 `{"object":"list","data":[{"id":...}]}`） |
-| API Key | `sk-dsh-web-cdfedbd300cc0e0ac0b4cc0c4209cd2cadc5271e61f5c103`（**以此为准**：真值来源 `external-layer/src/index.ts:5` 的 `EXT_LAYER_API_KEY` 缺省值。历史上多次抄错成 `...cde**fe**dbd3...`，多一个 `e` 就是 401 `Incorrect API key provided`） |
+| API Key | `sk-ext-layer-<your-key>`（**以此为准**：真值来源 `external-layer/src/index.ts:5` 的 `EXT_LAYER_API_KEY` 缺省值。历史上多次抄错成 `...cde**fe**dbd3...`，多一个 `e` 就是 401 `Incorrect API key provided`） |
 | 鉴权方式 | `Authorization: Bearer <key>`（timingSafeEqual 比对，长度不符即 401） |
 | Key 配置位置 | 环境变量 `EXT_LAYER_API_KEY`（未设则用上面的缺省值）；老线的 key 在 `C:\Users\daixu\.codex-chatgpt-web-dev\config.json` 的 `apiKey` |
 | 聊天客户端（DSH provider `codex-website`） | 需要环境变量 `CODEX_WEBSITE_API_KEY` = 上面同一个 key（已写入 User 作用域，**重启宿主后生效**） |
@@ -112,7 +112,7 @@
 
 ```bash
 curl http://127.0.0.1:17843/v1/responses \
-  -H "Authorization: Bearer sk-dsh-web-cdfedbd300cc0e0ac0b4cc0c4209cd2cadc5271e61f5c103" \
+  -H "Authorization: Bearer sk-ext-layer-<your-key>" \
   -H "Content-Type: application/json" \
   -d "{\"model\":\"chatgpt-web/latest\",\"input\":\"Reply with the single word PONG and nothing else.\",\"stream\":false}"
 ```
@@ -129,7 +129,7 @@ curl http://127.0.0.1:17843/v1/responses \
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://127.0.0.1:17843/v1", api_key="sk-dsh-web-cdfedb...")
+client = OpenAI(base_url="http://127.0.0.1:17843/v1", api_key="sk-ext-layer-<your-key>
 r = client.responses.create(model="chatgpt-web/latest", input="你好，介绍一下你自己")
 print(r.output_text)
 

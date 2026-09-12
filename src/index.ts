@@ -1,10 +1,21 @@
+import { randomBytes } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createTokenProvider } from "./credentials";
 import { startExternalLayer } from "./external-layer";
 
+/**
+ * External-layer entrypoint.
+ *
+ * Every value below is overridable by environment (see `.env.example` and README):
+ * the layer is designed to run on someone else's machine, in front of their own
+ * pristine `codex-chatgpt-web` upstream, so nothing here may bake in a machine
+ * specific path or a shared credential.
+ */
+
 const port = Number(process.env.EXT_LAYER_PORT ?? 17843);
-const apiKey = process.env.EXT_LAYER_API_KEY ?? "sk-dsh-web-cdfedbd300cc0e0ac0b4cc0c4209cd2cadc5271e61f5c103";
 const upstreamBaseUrl = process.env.EXT_LAYER_UPSTREAM ?? "http://127.0.0.1:17842";
-const authJsonPath = process.env.EXT_LAYER_AUTH_JSON ?? "C:\\Users\\daixu\\.codex\\auth.json";
+const authJsonPath = process.env.EXT_LAYER_AUTH_JSON ?? join(homedir(), ".codex", "auth.json");
 const statePath = process.env.EXT_LAYER_STATE;
 const stallTimeoutSec = process.env.EXT_LAYER_STALL_SEC !== undefined
   ? Number(process.env.EXT_LAYER_STALL_SEC)
@@ -16,9 +27,12 @@ const progressTimeoutMs = process.env.EXT_LAYER_PROGRESS_MS !== undefined
   ? Number(process.env.EXT_LAYER_PROGRESS_MS)
   : undefined;
 
+// The trusted Codex environment handed to upstream for envelope-less standard clients.
+// Defaults to the working directory the layer was started from, never to an author path.
+const environmentCwd = process.env.EXT_LAYER_CWD ?? process.cwd();
 const defaultEnvironment = {
-  cwd: process.env.EXT_LAYER_CWD ?? "E:/github/chatgpt-web-2-api",
-  workspaceRoots: (process.env.EXT_LAYER_ROOTS ?? "E:/github/chatgpt-web-2-api").split(";").filter(Boolean),
+  cwd: environmentCwd,
+  workspaceRoots: (process.env.EXT_LAYER_ROOTS ?? environmentCwd).split(";").filter(Boolean),
   sandboxMode: process.env.EXT_LAYER_SANDBOX ?? "danger-full-access",
 };
 
@@ -34,6 +48,14 @@ const solAvailable = parseBooleanEnv(process.env.EXT_LAYER_SOL_AVAILABLE);
 const proAvailable = parseBooleanEnv(process.env.EXT_LAYER_PRO_AVAILABLE);
 
 const upstreamHome = process.env.EXT_LAYER_UPSTREAM_HOME;
+
+// No shared default key ships with this repo: an unset EXT_LAYER_API_KEY generates a
+// per-install key instead of accepting a well-known one. Loopback-only, but a fixed
+// public default would still be an open door for any local process.
+const providedApiKey = process.env.EXT_LAYER_API_KEY?.trim();
+const apiKey = providedApiKey && providedApiKey.length > 0
+  ? providedApiKey
+  : `sk-ext-layer-${randomBytes(16).toString("hex")}`;
 
 const layer = await startExternalLayer({
   apiKey,
@@ -53,3 +75,13 @@ const layer = await startExternalLayer({
 console.log(
   `[external-layer] listening on ${layer.baseUrl}/v1 (upstream ${upstreamBaseUrl}) [stall=${layer.stallTimeoutSec}s firstByte=${layer.firstByteTimeoutMs}ms]`,
 );
+if (providedApiKey && providedApiKey.length > 0) {
+  console.log(
+    `[external-layer] api key: ${apiKey.slice(0, 12)}…${apiKey.slice(-4)} (from EXT_LAYER_API_KEY)`,
+  );
+} else {
+  console.log(`[external-layer] api key: ${apiKey}`);
+  console.log(
+    "[external-layer] that key was generated for this run only — set EXT_LAYER_API_KEY (e.g. in .env.local) to keep clients working across restarts",
+  );
+}

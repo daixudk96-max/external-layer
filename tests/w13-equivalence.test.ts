@@ -41,7 +41,11 @@ const MODELS_URL = `${LAYER_BASE_URL}/v1/models`;
 const RESPONSES_URL = `${LAYER_BASE_URL}/v1/responses`;
 
 /** The repo's documented local dev key (`EXT_LAYER_API_KEY` default in `src/index.ts`); loopback only. */
-const DEV_API_KEY = process.env.EXT_LAYER_API_KEY ?? "sk-dsh-web-cdfedbd300cc0e0ac0b4cc0c4209cd2cadc5271e61f5c103";
+/** Live cases are opt-in: `EXT_LAYER_LIVE=1 EXT_LAYER_API_KEY=<key> bun test`. */
+const LIVE = process.env.EXT_LAYER_LIVE === "1";
+const liveTest = LIVE ? test : test.skip;
+/** Key of the stack under test; supplied through EXT_LAYER_API_KEY when LIVE. */
+const DEV_API_KEY = process.env.EXT_LAYER_API_KEY ?? "sk-ext-layer-live-probe";
 
 const CHEAP_TIMEOUT_MS = 10_000;
 const TURN_TIMEOUT_MS = 90_000;
@@ -209,7 +213,7 @@ test("2: the report's expensive evidence is complete and consistent with src/mod
 // ---------------------------------------------------------------------------
 // (b) LIVE half — cheap probes re-measured against the running stack
 // ---------------------------------------------------------------------------
-test("3: the live stack still answers the cheap contract probes", async () => {
+liveTest("3: the live stack still answers the cheap contract probes", async () => {
   const healthz = await probe(HEALTHZ_URL, { method: "GET" }, CHEAP_TIMEOUT_MS);
   expect(healthz.status).toBe(200);
   expect(parseJson<{ status?: string }>(healthz.text, "GET /healthz").status).toBe("ok");
@@ -248,7 +252,7 @@ test("3: the live stack still answers the cheap contract probes", async () => {
     .toBe("invalid_api_key");
 });
 
-test("4: a real low-tier turn reaches the browser, then the identical body replays under a second", async () => {
+liveTest("4: a real low-tier turn reaches the browser, then the identical body replays under a second", async () => {
   // A nonce keeps this prompt from colliding with any earlier idempotency entry.
   const nonce = `w13eq-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const body = JSON.stringify({

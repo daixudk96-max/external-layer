@@ -2,3 +2,18 @@ node_modules/
 bun.lock
 *.log
 .tdd/
+
+# local secrets / machine specific configuration
+.env
+.env.local
+.env.*.local
+*.local
+
+# tdd-graph engine scratch (worktrees, merge sessions, bookkeeping)
+.dsh/
+.tdd-graph-worktrees/
+.tdd-graph-merge/
+
+# editor / OS noise
+.DS_Store
+Thumbs.db

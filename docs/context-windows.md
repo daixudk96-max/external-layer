@@ -119,7 +119,7 @@
 为避免运维人员再次陷入静态表格带来的认知偏差，外接层提供了实时端点 `/v1/context`。该端点支持“一键查询上游真实数据”。
 
 ### 6.1 鉴权
-与所有其他 `/v1/*` 路由一致，访问 `/v1/context` 必须携带 `Authorization: Bearer <API_KEY>` 标头（默认本地 dev key 为 `sk-dsh-web-cdfedbd300cc0e0ac0b4cc0c4209cd2cadc5271e61f5c103`，也可通过环境变量 `EXT_LAYER_API_KEY` 覆盖）。缺少或错误的凭据将返回 HTTP 401。
+与所有其他 `/v1/*` 路由一致，访问 `/v1/context` 必须携带 `Authorization: Bearer <API_KEY>` 标头（默认本地 dev key 为 `sk-ext-layer-<your-key>`，也可通过环境变量 `EXT_LAYER_API_KEY` 覆盖）。缺少或错误的凭据将返回 HTTP 401。
 
 ### 6.2 响应字段结构
 端点返回的 JSON 载荷包含当前部署环境、账号形态与各档位的实时信息：
