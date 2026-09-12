@@ -69,6 +69,6 @@ test("E3 the operator helper is a runnable Windows script with no baked-in windo
   expect(cmd).toContain("\r\n");
   expect(cmd).toContain("17843");
   expect(cmd).toContain("/v1/context");
-  expect(cmd).toMatch(/EXT_LAYER_API_KEY|sk-dsh-web-/);
+  expect(cmd).toMatch(/EXT_LAYER_API_KEY/);
   expect(cmd.match(HAND_FILLED)).toBeNull();
 });

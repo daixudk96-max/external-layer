@@ -125,7 +125,7 @@ test("E3 scripts/dsh-models.cmd is the client's last mile and bakes in no window
   expect(cmd).toContain("\r\n");
   expect(cmd).toContain("17843");
   expect(cmd).toContain("/v1/context");
-  expect(cmd).toMatch(/EXT_LAYER_API_KEY|sk-dsh-web-/);
+  expect(cmd).toMatch(/EXT_LAYER_API_KEY/);
   // Honest for a user who must paste the value into a client config: it names the field it fills.
   expect(cmd).toContain("contextWindow");
   expect(windowOffenders(resolved.path, cmd)).toEqual([]);

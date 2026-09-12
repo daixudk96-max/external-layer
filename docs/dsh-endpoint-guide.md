@@ -11,7 +11,7 @@
 | 模型列表 | `GET /v1/models`（OpenAI 标准格式 `{"object":"list","data":[{"id":...}]}`） |
 | API Key | `sk-ext-layer-<your-key>`（**以此为准**：真值来源 `external-layer/src/index.ts:5` 的 `EXT_LAYER_API_KEY` 缺省值。历史上多次抄错成 `...cde**fe**dbd3...`，多一个 `e` 就是 401 `Incorrect API key provided`） |
 | 鉴权方式 | `Authorization: Bearer <key>`（timingSafeEqual 比对，长度不符即 401） |
-| Key 配置位置 | 环境变量 `EXT_LAYER_API_KEY`（未设则用上面的缺省值）；老线的 key 在 `C:\Users\daixu\.codex-chatgpt-web-dev\config.json` 的 `apiKey` |
+| Key 配置位置 | 环境变量 `EXT_LAYER_API_KEY`（未设则用上面的缺省值）；老线的 key 在 `C:\Users\<you>\.codex-chatgpt-web-dev\config.json` 的 `apiKey` |
 | 聊天客户端（DSH provider `codex-website`） | 需要环境变量 `CODEX_WEBSITE_API_KEY` = 上面同一个 key（已写入 User 作用域，**重启宿主后生效**） |
 
 **架构（当前定案）**：客户端（标准 Responses + apiKey）→ **外接层 17843**（我们的全部代码：协议翻译 / 统一模型+五档 / 幂等回放 / 重试 / 工具面 / 看门狗）→ **原版 upstream 17842**（`E:\github\ccw-upstream` @ v5.0.6，**一行未改**，可 `git pull` 随更）→ 桌面壳 + 隧道 + 连接器（沿用老接线口，不新建）。
@@ -26,7 +26,7 @@
 | 老线 17841（已退役，仅供对照） | `E:\github\chatgpt-web-2-api\scripts\dsh-endpoint-start.cmd [nopause]` / `dsh-endpoint-stop.cmd [nopause]` |
 
 - 加 `nopause` 参数可无交互使用（脚本据此跳过 `pause`；不给参数时仍是双击即用的行为）。
-- **`upstream-endpoint-start.cmd` 必须盯 DEV home 的 descriptor**：浏览器宿主是两线共用的一个，descriptor 落在 `C:\Users\daixu\.codex-chatgpt-web-dev\runtime\launcher-browser.json`（原因见 `scripts/upstream-dev-launcher.cmd` 顶部注释：5.0.6 壳拒绝用非 dev-harness 配置启动 DEV runtime）。脚本已按此修正（2026-09-11），此前盯着 upstream home 会必然报 `launcher descriptor did not appear`。
+- **`upstream-endpoint-start.cmd` 必须盯 DEV home 的 descriptor**：浏览器宿主是两线共用的一个，descriptor 落在 `C:\Users\<you>\.codex-chatgpt-web-dev\runtime\launcher-browser.json`（原因见 `scripts/upstream-dev-launcher.cmd` 顶部注释：5.0.6 壳拒绝用非 dev-harness 配置启动 DEV runtime）。脚本已按此修正（2026-09-11），此前盯着 upstream home 会必然报 `launcher descriptor did not appear`。
 - 冷启动全自动约 35 秒；启动后每步状态可见，按键才关窗。
 - 首个回合可能需要 60 秒（会话验证）。
 - 改完 `external-layer/src/*` 后必须重启 17843 进程才会加载新代码（`bun run src/index.ts` 不做热重载）。
@@ -101,10 +101,10 @@
   - 3 倍 = 基线 × `CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER = 3` → 333,579（计算示例）
   - `GET /v1/models` 的 `context_window` 字段就是计算结果；`GET /v1/context` 给五档全量 + 当前开关状态
 - **对话历史：客户端是唯一写者**。provider 不替你存长历史，每回合按请求的 `input` + `previous_response_id` 链构建传输。
-- **响应快照**（供 `previous_response_id` 回放）：`C:\Users\daixu\.codex-chatgpt-web-dev\responses-state.json`。
+- **响应快照**（供 `previous_response_id` 回放）：`C:\Users\<you>\.codex-chatgpt-web-dev\responses-state.json`。
 - **传输机制**：浏览器单段预算 28,000 tokens；开 3 倍后自动拆 multipart 3 段，**服务端全自动切分，Agent 端零改动**。
 - **硬约束**：单条消息 ≤103K tokens（约 40 万字符）——服务端不切开单条消息。长历史拆多条消息或用 `previous_response_id` 链。
-- 极限场景（单回合塞多条超大消息）需要 turn_id 绑定：每条 user 消息带 `internal_chat_message_metadata_passthrough.turn_id` + 请求级 `client_metadata["x-codex-turn-metadata"].turn_id`，两者一致，最后一条 user 消息加 `id`。参考脚本 `C:\Users\daixu\AppData\Local\Temp\t-treble.cjs`（228K tokens 实测通过）。
+- 极限场景（单回合塞多条超大消息）需要 turn_id 绑定：每条 user 消息带 `internal_chat_message_metadata_passthrough.turn_id` + 请求级 `client_metadata["x-codex-turn-metadata"].turn_id`，两者一致，最后一条 user 消息加 `id`。参考脚本 `C:\Users\<you>\AppData\Local\Temp\t-treble.cjs`（228K tokens 实测通过）。
 
 ## 五、快速上手
 
@@ -175,9 +175,9 @@ r2 = client.responses.create(model="chatgpt-web/latest",
 | 内容 | 路径 |
 |---|---|
 | 启动/停止脚本 | `E:\github\chatgpt-web-2-api\scripts\dsh-endpoint-{start,stop}.cmd` |
-| 服务端配置（key/档位开关/3 倍开关） | `C:\Users\daixu\.codex-chatgpt-web-dev\config.json` |
-| 响应快照（幂等回放） | `C:\Users\daixu\.codex-chatgpt-web-dev\responses-state.json` |
-| serve 运行日志 | `C:\Users\daixu\AppData\Local\Temp\dsh-serve.log` |
-| launcher 运行日志 | `C:\Users\daixu\AppData\Local\Temp\dsh-launcher.log` |
+| 服务端配置（key/档位开关/3 倍开关） | `C:\Users\<you>\.codex-chatgpt-web-dev\config.json` |
+| 响应快照（幂等回放） | `C:\Users\<you>\.codex-chatgpt-web-dev\responses-state.json` |
+| serve 运行日志 | `C:\Users\<you>\AppData\Local\Temp\dsh-serve.log` |
+| launcher 运行日志 | `C:\Users\<you>\AppData\Local\Temp\dsh-launcher.log` |
 | provider 源码 | `E:\github\chatgpt-web-2-api\provider\codex-chatgpt-web`（bun 直接跑 TS） |
 | 上下文数字计算源头 | `src/chatgpt-web-models.ts`（103,000 消息边界 ×3 = 333,579 的历史计算示例） |
