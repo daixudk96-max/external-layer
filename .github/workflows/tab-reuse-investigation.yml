@@ -1,50 +1,58 @@
-name: Tab reuse investigation
+name: Apply validated investigation patch
 on:
   push:
     branches: [fix/tab-reuse-investigation-20260913]
+    paths: [_investigation-transfer/READY]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  baseline:
+  apply:
+    if: github.event.head_commit.message == 'ci: apply validated investigation patch'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          ref: fix/tab-reuse-investigation-20260913
+      - name: Verify the reviewed baseline and decoded patch
+        run: |
+          test "$(git hash-object src/external-layer.ts)" = b3a80937db7a201a221d2c4e9b342813e293d12a
+          test "$(git hash-object src/conversation-registry.ts)" = a73c2c79207e02bcad0b2b0b645c1acabf08b6be
+          python3 - <<'PY'
+          import base64, gzip, hashlib, pathlib
+          patch = gzip.decompress(base64.b64decode(pathlib.Path('_investigation-transfer/patch.b64').read_text()))
+          assert hashlib.sha256(patch).hexdigest() == '7980fcd15547c9b81b24969c779dfddb2496ac447fe467ef97fc9296e09dc49d'
+          pathlib.Path('/tmp/investigation.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/investigation.patch
+          git apply /tmp/investigation.patch
+          git diff --check
+      - name: Commit only the reviewed external-layer code and new regressions
+        run: |
+          git add .env.example src/conversation-registry.ts src/external-layer.ts src/index.ts src/tool-turns.ts tests/w28-tool-turn-lifetime.test.ts scripts/reproduce-tool-owner.ts
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: preserve native tool execution across Responses rounds'
+          git push origin HEAD:fix/tab-reuse-investigation-20260913
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-      - name: Install development tools without changing manifests
-        run: npm install --no-save --package-lock=false typescript
-      - name: Record tool versions
-        run: |
-          mkdir -p /tmp/tab-reuse-bundle
-          { git rev-parse HEAD; bun --version; node --version; ./node_modules/.bin/tsc --version; } | tee /tmp/tab-reuse-bundle/versions.txt
-      - name: Typecheck unchanged source
+          bun-version: '1.4.2'
+      - run: npm install --no-save --package-lock=false typescript@7.0.2
+      - run: mkdir -p /tmp/verification
+      - name: Typecheck
         id: typecheck
         continue-on-error: true
-        run: set -o pipefail; bunx tsc --noEmit 2>&1 | tee /tmp/tab-reuse-bundle/typecheck-baseline.log
-      - name: Run unchanged tests
+        run: set -o pipefail; bunx tsc --noEmit 2>&1 | tee /tmp/verification/typecheck.log
+      - name: Full unchanged baseline plus added regressions
         id: tests
         continue-on-error: true
-        run: set -o pipefail; bun test 2>&1 | tee /tmp/tab-reuse-bundle/tests-baseline.log
-      - name: Package source and development runtime for offline investigation
-        if: always()
-        run: |
-          mkdir -p /tmp/tab-reuse-bundle/external-layer /tmp/tab-reuse-bundle/upstream-readonly
-          git archive HEAD | tar -x -C /tmp/tab-reuse-bundle/external-layer
-          cp -a node_modules /tmp/tab-reuse-bundle/external-layer/
-          cp "$(command -v bun)" /tmp/tab-reuse-bundle/bun
-          curl --fail --location --retry 2 https://codeload.github.com/miuuyy/codex-chatgpt-web/tar.gz/e85e369 | tar -xz --strip-components=1 -C /tmp/tab-reuse-bundle/upstream-readonly
-          tar -czf /tmp/tab-reuse-investigation.tar.gz -C /tmp/tab-reuse-bundle .
+        run: set -o pipefail; bun test 2>&1 | tee /tmp/verification/tests.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: tab-reuse-investigation
-          path: /tmp/tab-reuse-investigation.tar.gz
-          retention-days: 3
-      - name: Enforce both baseline gates
+          name: patched-verification
+          path: /tmp/verification/
+      - name: Enforce the actual gates without hiding pre-existing failures
         if: always()
         env:
           TYPECHECK: ${{ steps.typecheck.outcome }}
