@@ -1,0 +1,50 @@
+name: Tab reuse audit
+on:
+  push:
+    branches: [fix/tab-reuse-audit-20260913]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.11'
+      - name: Install test tooling only
+        run: |
+          bun install
+          npm install --no-save --package-lock=false typescript@5.9.3
+          mkdir -p "$RUNNER_TEMP/audit"
+          bun --version > "$RUNNER_TEMP/audit/bun-version.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/audit/commit.txt"
+      - name: Existing typecheck and tests (no live model calls)
+        id: gates
+        run: |
+          set +e
+          bunx tsc --noEmit > "$RUNNER_TEMP/audit/typecheck.log" 2>&1
+          types=$?
+          bun test > "$RUNNER_TEMP/audit/tests.log" 2>&1
+          tests=$?
+          printf 'typecheck_exit=%s\ntests_exit=%s\n' "$types" "$tests" > "$RUNNER_TEMP/audit/gates.txt"
+          cat "$RUNNER_TEMP/audit/gates.txt"
+          tail -n 15 "$RUNNER_TEMP/audit/tests.log"
+          test "$types" = 0 && test "$tests" = 0
+      - name: Export exact source and offline test runtime
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/audit"
+          git archive --format=tar.gz --output="$RUNNER_TEMP/audit/external-layer-source.tar.gz" HEAD
+          if command -v bun >/dev/null; then cp "$(command -v bun)" "$RUNNER_TEMP/audit/bun"; fi
+          if test -d node_modules; then tar -czf "$RUNNER_TEMP/audit/node_modules.tar.gz" node_modules; fi
+          curl --fail --location --retry 2 https://codeload.github.com/miuuyy/codex-chatgpt-web/tar.gz/e85e3693fdb4e3e033348c08df0298c20fcdb612 -o "$RUNNER_TEMP/audit/upstream-v5.0.6-readonly.tar.gz"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tab-reuse-audit-${{ github.sha }}
+          path: ${{ runner.temp }}/audit/
+          retention-days: 7
