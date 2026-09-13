@@ -35,6 +35,9 @@ export function canonicalItemDigest(item: unknown): string {
   if (record.call_id !== undefined) clean.call_id = record.call_id;
   if (record.output !== undefined) clean.output = record.output;
   if (record.name !== undefined) clean.name = record.name;
+  if (record.arguments !== undefined) clean.arguments = record.arguments;
+  if (record.summary !== undefined) clean.summary = record.summary;
+  if (record.encrypted_content !== undefined) clean.encrypted_content = record.encrypted_content;
 
   if (typeof record.content === "string") {
     clean.content = record.content;
@@ -140,6 +143,7 @@ export class ConversationRegistry {
   public resolveConversation(
     items: unknown[],
     previousResponseId?: string,
+    promptCacheKey?: string,
   ): { threadId: string; isNew: boolean } {
     // 1. previous_response_id 优先
     if (previousResponseId && previousResponseId.trim().length > 0) {
@@ -153,6 +157,13 @@ export class ConversationRegistry {
       }
     }
 
+    // DSH uses prompt_cache_key as its stable session ID. Hash it, never persist the raw key.
+    // Unlike history guessing, this also works before the first HTTP response reaches EOF.
+    if (typeof promptCacheKey === "string" && promptCacheKey.trim()) {
+      const threadId = `prov-session-${createHash("sha256").update(promptCacheKey).digest("hex")}`;
+      return { threadId, isNew: !this.entries.has(threadId) };
+    }
+
     // 2. 历史前缀匹配
     if (items.length > 0) {
       const incomingDigests = items.map(canonicalItemDigest);
@@ -160,6 +171,8 @@ export class ConversationRegistry {
       let maxMatchedPrefixLen = -1;
 
       for (const record of this.entries.values()) {
+        // An anonymous history must not borrow an explicitly identified client's session.
+        if (record.threadId.startsWith("prov-session-")) continue;
         const rec = record.itemDigests;
         if (rec.length <= incomingDigests.length && rec.length > 0) {
           let matches = true;
